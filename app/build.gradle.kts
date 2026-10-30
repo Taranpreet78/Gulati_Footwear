@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "in.gulatifootwear.billing"
+    namespace = "com.gulatifootwear.billing"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "in.gulatifootwear.billing"
+        applicationId = "com.gulatifootwear.billing"
         minSdk = 23
         targetSdk = 35
         versionCode = 1
