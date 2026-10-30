@@ -1,4 +1,4 @@
-package in.gulatifootwear.billing
+package com.gulatifootwear.billing
 
 import android.content.Context
 import androidx.room.*
