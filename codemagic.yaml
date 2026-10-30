@@ -1,0 +1,26 @@
+workflows:
+  gulati-footwear-android:
+    name: Gulati Footwear APK Build
+    max_build_duration: 60
+    instance_type: linux_x2
+
+    environment:
+      java: 17
+
+    scripts:
+      - name: Set Android SDK location
+        script: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
+      - name: Download Gradle 8.9
+        script: |
+          curl -L https://services.gradle.org/distributions/gradle-8.9-bin.zip -o gradle.zip
+          unzip -q gradle.zip -d "$HOME"
+          "$HOME/gradle-8.9/bin/gradle" --version
+
+      - name: Build Gulati Footwear APK
+        script: |
+          "$HOME/gradle-8.9/bin/gradle" assembleDebug
+
+    artifacts:
+      - app/build/outputs/apk/debug/*.apk
