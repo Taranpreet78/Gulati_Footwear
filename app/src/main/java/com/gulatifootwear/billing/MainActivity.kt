@@ -592,32 +592,116 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun generatePdf(invoiceNo: String, stamp: Long): File {
-        val lines = mutableListOf(SHOP_NAME, SHOP_ADDRESS, "Phone: $SHOP_PHONE", "UPI: $SHOP_UPI", "--------------------------------",
-            "Invoice: $invoiceNo", "Date: " + SimpleDateFormat("dd-MM-yyyy HH:mm", Locale("en", "IN")).format(Date(stamp)))
-        if (customerName.isNotBlank()) lines += "Customer: $customerName"
-        if (customerPhone.isNotBlank()) lines += "Phone: $customerPhone"
-        lines += "--------------------------------"
-        cart.forEach { line ->
-            lines += line.product.name + if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
-            lines += "${line.qty} x ${money(line.price)} = ${money(line.qty * line.price)}"
-        }
-        lines += listOf("--------------------------------", "Subtotal: ${money(subtotal())}", "Discount: ${money(discount)}")
-        if (gstEnabled) lines += "GST (${gstPercent}%): ${money(taxable() * gstPercent / 100.0)}"
-        lines += listOf("TOTAL: ${money(total())}", "Payment: $paymentMode", "--------------------------------", "Thank you for shopping!", "Please visit again.")
+        // 80 mm receipt width at 72 dpi.
         val width = (80.0 / 25.4 * 72.0).toInt()
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 8.5f; typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL) }
-        val wrapped = lines.flatMap { wrapText(it, paint, width - 18f) }
+        val left = 9f
+        val right = width - 9f
+        val contentWidth = right - left
         val doc = PdfDocument()
-        val page = doc.startPage(PdfDocument.PageInfo.Builder(width, max(300, wrapped.size * 15 + 42), 1).create())
-        var y = 22f
-        wrapped.forEachIndexed { i, line ->
-            paint.typeface = Typeface.create(Typeface.MONOSPACE, if (i == 0) Typeface.BOLD else Typeface.NORMAL)
-            page.canvas.drawText(line, 9f, y, paint); y += 15f
+        val normal = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = 8f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+        }
+        val rows = mutableListOf<Triple<String, Paint, Float>>()
+
+        fun addText(
+            text: String,
+            size: Float = 8f,
+            bold: Boolean = false,
+            align: Paint.Align = Paint.Align.LEFT,
+            gapAfter: Float = 3f
+        ) {
+            val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.BLACK
+                textSize = size
+                typeface = Typeface.create(Typeface.DEFAULT, if (bold) Typeface.BOLD else Typeface.NORMAL)
+                textAlign = align
+            }
+            rows += Triple(text, p, gapAfter)
+        }
+
+        // Shop name and shop details centered at the top.
+        addText(SHOP_NAME.uppercase(Locale.getDefault()), 14f, true, Paint.Align.CENTER, 4f)
+        addText(SHOP_ADDRESS, 7.5f, false, Paint.Align.CENTER, 2f)
+        addText("Phone: $SHOP_PHONE", 8f, false, Paint.Align.CENTER, 2f)
+        addText("UPI: $SHOP_UPI", 7.5f, false, Paint.Align.CENTER, 5f)
+        addText("------------------------------------------", 7f, false, Paint.Align.CENTER, 5f)
+
+        // Invoice and customer information remain left aligned.
+        addText("Invoice: $invoiceNo", 8.5f, true)
+        addText("Date: " + SimpleDateFormat("dd-MM-yyyy HH:mm", Locale("en", "IN")).format(Date(stamp)), 8f)
+        if (customerName.isNotBlank()) addText("Customer: $customerName")
+        if (customerPhone.isNotBlank()) addText("Phone: $customerPhone")
+        addText("------------------------------------------", 7f, false, Paint.Align.CENTER, 5f)
+
+        // Borderless four-column item layout.
+        val qtyX = left + contentWidth * 0.64f
+        val rateX = left + contentWidth * 0.81f
+        val totalX = right
+        val itemWidth = contentWidth * 0.60f
+        val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = 7.2f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val headerY = rows.sumOf { it.second.textSize.toDouble() + it.third.toDouble() }.toFloat() + 22f
+        // Header is drawn separately so each column can be aligned precisely.
+        addText("Item detail", 7.5f, true, Paint.Align.LEFT, 2f)
+        addText("Qty", 7.2f, true, Paint.Align.LEFT, 1f)
+        addText("Rate", 7.2f, true, Paint.Align.LEFT, 1f)
+        addText("Total", 7.2f, true, Paint.Align.LEFT, 3f)
+
+        cart.forEach { line ->
+            val detail = line.product.name +
+                if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
+            val detailLines = wrapText(detail, normal, itemWidth)
+            detailLines.forEach { addText(it, 7.5f, false, Paint.Align.LEFT, 0f) }
+
+            val qtyText = line.qty.toString()
+            val rateText = money(line.price)
+            val totalText = money(line.qty * line.price)
+            // Values are placed in a single borderless row under their respective headings.
+            addText(
+                String.format(Locale.US, "%-7s %10s %10s", qtyText, rateText, totalText),
+                7.2f, false, Paint.Align.LEFT, 4f
+            )
+        }
+
+        addText("------------------------------------------", 7f, false, Paint.Align.CENTER, 5f)
+        addText("Subtotal: ${money(subtotal())}", 8.5f)
+        addText("Discount: ${money(discount)}", 8.5f)
+        if (gstEnabled) addText("GST (${gstPercent}%): ${money(taxable() * gstPercent / 100.0)}", 8.5f)
+        addText("TOTAL: ${money(total())}", 10f, true, Paint.Align.LEFT, 5f)
+        addText("Payment: $paymentMode", 8f)
+        addText("------------------------------------------", 7f, false, Paint.Align.CENTER, 5f)
+        addText("Thank you for shopping!", 8.5f, true, Paint.Align.CENTER, 2f)
+        addText("Please visit again.", 8f, false, Paint.Align.CENTER, 3f)
+
+        val pageHeight = max(300, rows.sumOf { (it.second.textSize + it.third).toDouble() }.toInt() + 45)
+        val page = doc.startPage(PdfDocument.PageInfo.Builder(width, pageHeight, 1).create())
+        var y = 20f
+        rows.forEachIndexed { index, row ->
+            val (text, p, gapAfter) = row
+            val x = if (p.textAlign == Paint.Align.CENTER) width / 2f else left
+            page.canvas.drawText(text, x, y, p)
+            y += p.textSize + gapAfter
+
+            // Render the item headings and each item's values as aligned columns.
+            if (index == 11) {
+                // Column headings occupy the four consecutive rows just added above.
+                val headingsTop = y - (rows[index].second.textSize + rows[index].third)
+                page.canvas.drawText("Qty", qtyX, headingsTop, headerPaint)
+                page.canvas.drawText("Rate", rateX, headingsTop, headerPaint)
+                page.canvas.drawText("Total", totalX, headingsTop, headerPaint.apply { textAlign = Paint.Align.RIGHT })
+            }
         }
         doc.finishPage(page)
+
         val dir = File(cacheDir, "invoices").apply { mkdirs() }
         val file = File(dir, "$invoiceNo.pdf")
-        FileOutputStream(file).use { doc.writeTo(it) }; doc.close()
+        FileOutputStream(file).use { doc.writeTo(it) }
+        doc.close()
         return file
     }
 
