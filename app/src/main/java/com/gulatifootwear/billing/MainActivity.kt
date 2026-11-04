@@ -623,31 +623,33 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun generatePdf(invoiceNo: String, stamp: Long): File {
-        // 70 mm wide portrait receipt. PDF coordinates are points (72 pt = 1 inch).
+        // Match the uploaded Word receipt: 70 mm page, approximately 5 mm side margins.
         val width = (70.0 / 25.4 * 72.0).toInt()
-        val left = 7f
-        val right = width - 7f
+        val left = 14f
+        val right = width - 14f
         val printableWidth = right - left
         val doc = PdfDocument()
         val operations = mutableListOf<Pair<Float, (Canvas, Float) -> Unit>>()
-        var requiredHeight = 14f
+        var requiredHeight = 12f
 
-        // Monospaced type matches the compact handheld-printer receipt reference.
-        fun paint(size: Float, bold: Boolean = false, align: Paint.Align = Paint.Align.LEFT) =
+        // The DOCX uses the Word Normal style with no explicit font family.
+        // Android's sans-serif is the closest built-in equivalent; body text is 10 pt.
+        fun paint(size: Float = 10f, bold: Boolean = false,
+                  align: Paint.Align = Paint.Align.LEFT) =
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.BLACK
                 textSize = size
-                typeface = Typeface.create("monospace", if (bold) Typeface.BOLD else Typeface.NORMAL)
+                typeface = Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
                 textAlign = align
             }
 
-        fun addWrapped(text: String, size: Float = 8f, bold: Boolean = false,
-                       align: Paint.Align = Paint.Align.LEFT, gap: Float = 2f) {
+        fun addText(text: String, size: Float = 10f, bold: Boolean = false,
+                    align: Paint.Align = Paint.Align.LEFT, gap: Float = 2f) {
             val p = paint(size, bold)
             val lines = wrapText(text, p, printableWidth).ifEmpty { listOf("") }
             lines.forEach { line ->
-                val height = size + gap
-                operations += height to { canvas, y ->
+                val lineHeight = size + gap
+                operations += lineHeight to { canvas, y ->
                     val x = when (align) {
                         Paint.Align.CENTER -> width / 2f
                         Paint.Align.RIGHT -> right
@@ -655,103 +657,70 @@ class MainActivity : AppCompatActivity() {
                     }
                     canvas.drawText(line, x, y, paint(size, bold, align))
                 }
-                requiredHeight += height
+                requiredHeight += lineHeight
             }
         }
 
-        // Full-width dotted separator, like the supplied portable-printer sample.
-        fun addRule() {
-            val height = 8f
-            operations += height to { canvas, y ->
-                val rulePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.BLACK
-                    strokeWidth = 0.65f
-                    pathEffect = DashPathEffect(floatArrayOf(1.4f, 2.0f), 0f)
-                }
-                canvas.drawLine(left, y - 2f, right, y - 2f, rulePaint)
-            }
-            requiredHeight += height
-        }
+        // Header: centered shop name and centered contact information.
+        addText(SHOP_NAME.uppercase(Locale.getDefault()), 11f, true, Paint.Align.CENTER, 1f)
+        addText(SHOP_ADDRESS, 10f, false, Paint.Align.CENTER, 0f)
+        addText("Phone: $SHOP_PHONE", 10f, false, Paint.Align.CENTER, 0f)
+        addText("UPI: $SHOP_UPI", 10f, false, Paint.Align.CENTER, 5f)
 
-        fun addPair(label: String, value: String, size: Float = 8f, bold: Boolean = false) {
-            val height = size + 3f
-            operations += height to { canvas, y ->
-                val labelPaint = paint(size, bold)
-                val valuePaint = paint(size, bold, Paint.Align.RIGHT)
-                val valueWidth = valuePaint.measureText(value)
-                val labelWidth = (printableWidth - valueWidth - 5f).coerceAtLeast(20f)
-                val labelLines = wrapText(label, labelPaint, labelWidth)
-                canvas.drawText(labelLines.firstOrNull() ?: "", left, y, labelPaint)
-                canvas.drawText(value, right, y, valuePaint)
-            }
-            requiredHeight += height
-        }
+        // Invoice information, left aligned like the supplied Word document.
+        addText("BILL NO: $invoiceNo", 10f, true, Paint.Align.LEFT, 0f)
+        addText("Date: " + SimpleDateFormat("dd-MM-yyyy HH:mm", Locale("en", "IN")).format(Date(stamp)), 10f)
+        if (customerName.isNotBlank()) addText("Customer: $customerName", 10f)
+        if (customerPhone.isNotBlank()) addText("Phone: $customerPhone", 10f, false, Paint.Align.LEFT, 5f)
 
-        addWrapped(SHOP_NAME.uppercase(Locale.getDefault()), 10f, true, Paint.Align.CENTER, 2f)
-        addWrapped(SHOP_ADDRESS, 7.2f, false, Paint.Align.LEFT, 1.5f)
-        addWrapped("Phone: $SHOP_PHONE", 7.2f, false, Paint.Align.LEFT, 1f)
-        addWrapped("UPI: $SHOP_UPI", 7.2f, false, Paint.Align.LEFT, 2f)
-        addRule()
-
-        addWrapped("Invoice: $invoiceNo", 7.8f, true)
-        addWrapped("Date: " + SimpleDateFormat("dd-MM-yyyy HH:mm", Locale("en", "IN")).format(Date(stamp)), 7.6f)
-        if (customerName.isNotBlank()) addWrapped("Customer: $customerName", 7.6f)
-        if (customerPhone.isNotBlank()) addWrapped("Phone: $customerPhone", 7.6f)
-        addRule()
-
-        // Four fixed columns sized to stay inside the 70 mm printable area.
-        val tableFont = 6.7f
-        val columnGap = 3f
-        val itemWidth = 64f
-        val qtyWidth = 20f
-        val rateWidth = 43f
-        val totalWidth = (printableWidth - itemWidth - qtyWidth - rateWidth - columnGap * 3).coerceAtLeast(38f)
+        // Four borderless columns. Values stay aligned while long item names wrap.
+        val tableSize = 10f
+        val itemWidth = printableWidth * 0.39f
+        val qtyWidth = printableWidth * 0.10f
+        val rateWidth = printableWidth * 0.235f
+        val totalWidth = printableWidth - itemWidth - qtyWidth - rateWidth
         val itemX = left
-        val qtyLeft = itemX + itemWidth + columnGap
-        val rateLeft = qtyLeft + qtyWidth + columnGap
-        val totalLeft = rateLeft + rateWidth + columnGap
+        val qtyLeft = itemX + itemWidth
+        val rateLeft = qtyLeft + qtyWidth
+        val totalLeft = rateLeft + rateWidth
         val qtyCenter = qtyLeft + qtyWidth / 2f
         val rateRight = rateLeft + rateWidth
         val totalRight = totalLeft + totalWidth
 
-        val headerHeight = tableFont + 5f
+        val headerHeight = tableSize + 5f
         operations += headerHeight to { canvas, y ->
-            canvas.drawText("Item detail", itemX, y, paint(tableFont, true))
-            canvas.drawText("Qty", qtyCenter, y, paint(tableFont, true, Paint.Align.CENTER))
-            canvas.drawText("Rate", rateRight, y, paint(tableFont, true, Paint.Align.RIGHT))
-            canvas.drawText("Total", totalRight, y, paint(tableFont, true, Paint.Align.RIGHT))
+            canvas.drawText("Item detail", itemX, y, paint(tableSize, true))
+            canvas.drawText("Qty", qtyCenter, y, paint(tableSize, true, Paint.Align.CENTER))
+            canvas.drawText("Rate", rateRight, y, paint(tableSize, true, Paint.Align.RIGHT))
+            canvas.drawText("Total", totalRight, y, paint(tableSize, true, Paint.Align.RIGHT))
         }
         requiredHeight += headerHeight
-        addRule()
 
         cart.forEach { line ->
             val itemTitle = line.product.name +
                 if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
-            val itemLines = wrapText(itemTitle, paint(tableFont), itemWidth).ifEmpty { listOf("") }
-            val rowHeight = itemLines.size * (tableFont + 2.2f) + 3f
+            val itemLines = wrapText(itemTitle, paint(tableSize), itemWidth).ifEmpty { listOf("") }
+            val rowHeight = itemLines.size * (tableSize + 2f) + 3f
             operations += rowHeight to { canvas, y ->
-                itemLines.forEachIndexed { lineIndex, itemLine ->
-                    canvas.drawText(itemLine, itemX, y + lineIndex * (tableFont + 2.2f), paint(tableFont))
+                itemLines.forEachIndexed { index, itemLine ->
+                    canvas.drawText(itemLine, itemX, y + index * (tableSize + 2f), paint(tableSize))
                 }
-                canvas.drawText(line.qty.toString(), qtyCenter, y, paint(tableFont, false, Paint.Align.CENTER))
-                canvas.drawText(money(line.price), rateRight, y, paint(tableFont, false, Paint.Align.RIGHT))
-                canvas.drawText(money(line.qty * line.price), totalRight, y, paint(tableFont, false, Paint.Align.RIGHT))
+                canvas.drawText(line.qty.toString(), qtyCenter, y, paint(tableSize, false, Paint.Align.CENTER))
+                canvas.drawText(money(line.price), rateRight, y, paint(tableSize, false, Paint.Align.RIGHT))
+                canvas.drawText(money(line.qty * line.price), totalRight, y, paint(tableSize, false, Paint.Align.RIGHT))
             }
             requiredHeight += rowHeight
-            addRule()
         }
 
-        addPair("Subtotal:", money(subtotal()), 7.6f)
-        addPair("Discount:", money(discount), 7.6f)
-        if (gstEnabled) addPair("GST (${gstPercent}%):", money(taxable() * gstPercent / 100.0), 7.6f)
-        addPair("TOTAL:", money(total()), 8.4f, true)
-        addWrapped("Payment: $paymentMode", 7.6f, false, Paint.Align.LEFT, 2f)
-        addRule()
-        addWrapped("Thank you for shopping!", 8f, true, Paint.Align.CENTER, 1f)
-        addWrapped("Please visit again.", 7.6f, false, Paint.Align.CENTER, 2f)
+        // Totals and footer use the same 10 pt body text and plain paragraph styling.
+        addText("Subtotal: ${money(subtotal())}", 10f)
+        addText("Discount: ${money(discount)}", 10f)
+        if (gstEnabled) addText("GST (${gstPercent}%): ${money(taxable() * gstPercent / 100.0)}", 10f)
+        addText("TOTAL: ${money(total())}", 10f, true)
+        addText("Payment: $paymentMode", 10f, false, Paint.Align.LEFT, 5f)
+        addText("Thank you for shopping with us! Please visit again.", 10f, false, Paint.Align.CENTER, 2f)
 
-        // Portrait page: 70 mm wide, content-driven length.
-        val pageHeight = max(width + 40, requiredHeight.toInt() + 24)
+        val pageHeight = max(width + 40, requiredHeight.toInt() + 18)
         val page = doc.startPage(PdfDocument.PageInfo.Builder(width, pageHeight, 1).create())
         var y = 12f
         operations.forEach { (height, draw) ->
