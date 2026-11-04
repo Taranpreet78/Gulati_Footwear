@@ -623,20 +623,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun generatePdf(invoiceNo: String, stamp: Long): File {
-        // Exact 70 mm paper width for compact handheld thermal printers.
+        // 70 mm wide portrait receipt. PDF coordinates are points (72 pt = 1 inch).
         val width = (70.0 / 25.4 * 72.0).toInt()
-        val left = 8f
-        val right = width - 8f
+        val left = 7f
+        val right = width - 7f
         val printableWidth = right - left
         val doc = PdfDocument()
         val operations = mutableListOf<Pair<Float, (Canvas, Float) -> Unit>>()
-        var requiredHeight = 16f
+        var requiredHeight = 14f
 
+        // Monospaced type matches the compact handheld-printer receipt reference.
         fun paint(size: Float, bold: Boolean = false, align: Paint.Align = Paint.Align.LEFT) =
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.BLACK
                 textSize = size
-                typeface = Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
+                typeface = Typeface.create("monospace", if (bold) Typeface.BOLD else Typeface.NORMAL)
                 textAlign = align
             }
 
@@ -658,12 +659,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Full-width dotted separator, like the supplied portable-printer sample.
         fun addRule() {
-            val height = 7f
+            val height = 8f
             operations += height to { canvas, y ->
                 val rulePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.DKGRAY
-                    strokeWidth = 0.55f
+                    color = Color.BLACK
+                    strokeWidth = 0.65f
+                    pathEffect = DashPathEffect(floatArrayOf(1.4f, 2.0f), 0f)
                 }
                 canvas.drawLine(left, y - 2f, right, y - 2f, rulePaint)
             }
@@ -684,40 +687,70 @@ class MainActivity : AppCompatActivity() {
             requiredHeight += height
         }
 
-        addWrapped(SHOP_NAME.uppercase(Locale.getDefault()), 11f, true, Paint.Align.CENTER, 2f)
-        addWrapped(SHOP_ADDRESS, 7.8f, false, Paint.Align.CENTER, 1.5f)
-        addWrapped("Phone: $SHOP_PHONE", 7.8f, false, Paint.Align.CENTER, 1f)
-        addWrapped("UPI: $SHOP_UPI", 7.5f, false, Paint.Align.CENTER, 2f)
+        addWrapped(SHOP_NAME.uppercase(Locale.getDefault()), 10f, true, Paint.Align.CENTER, 2f)
+        addWrapped(SHOP_ADDRESS, 7.2f, false, Paint.Align.LEFT, 1.5f)
+        addWrapped("Phone: $SHOP_PHONE", 7.2f, false, Paint.Align.LEFT, 1f)
+        addWrapped("UPI: $SHOP_UPI", 7.2f, false, Paint.Align.LEFT, 2f)
         addRule()
 
-        addWrapped("BILL NO: $invoiceNo", 8f, true)
-        addWrapped("Date: " + SimpleDateFormat("dd-MM-yyyy  HH:mm", Locale("en", "IN")).format(Date(stamp)), 7.8f)
-        if (customerName.isNotBlank()) addWrapped("Customer: $customerName", 7.8f)
-        if (customerPhone.isNotBlank()) addWrapped("Phone: $customerPhone", 7.8f)
+        addWrapped("Invoice: $invoiceNo", 7.8f, true)
+        addWrapped("Date: " + SimpleDateFormat("dd-MM-yyyy HH:mm", Locale("en", "IN")).format(Date(stamp)), 7.6f)
+        if (customerName.isNotBlank()) addWrapped("Customer: $customerName", 7.6f)
+        if (customerPhone.isNotBlank()) addWrapped("Phone: $customerPhone", 7.6f)
         addRule()
 
-        // Full-width item descriptions prevent cramped columns on portable printers.
+        // Four fixed columns sized to stay inside the 70 mm printable area.
+        val tableFont = 6.7f
+        val columnGap = 3f
+        val itemWidth = 64f
+        val qtyWidth = 20f
+        val rateWidth = 43f
+        val totalWidth = (printableWidth - itemWidth - qtyWidth - rateWidth - columnGap * 3).coerceAtLeast(38f)
+        val itemX = left
+        val qtyLeft = itemX + itemWidth + columnGap
+        val rateLeft = qtyLeft + qtyWidth + columnGap
+        val totalLeft = rateLeft + rateWidth + columnGap
+        val qtyCenter = qtyLeft + qtyWidth / 2f
+        val rateRight = rateLeft + rateWidth
+        val totalRight = totalLeft + totalWidth
+
+        val headerHeight = tableFont + 5f
+        operations += headerHeight to { canvas, y ->
+            canvas.drawText("Item detail", itemX, y, paint(tableFont, true))
+            canvas.drawText("Qty", qtyCenter, y, paint(tableFont, true, Paint.Align.CENTER))
+            canvas.drawText("Rate", rateRight, y, paint(tableFont, true, Paint.Align.RIGHT))
+            canvas.drawText("Total", totalRight, y, paint(tableFont, true, Paint.Align.RIGHT))
+        }
+        requiredHeight += headerHeight
+        addRule()
+
         cart.forEach { line ->
             val itemTitle = line.product.name +
-                if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
-            addWrapped(itemTitle, 8.2f, true, Paint.Align.LEFT, 1.5f)
-            addWrapped("Qty: ${line.qty}    Rate: ${money(line.price)}", 7.6f)
-            addPair("Amount", money(line.qty * line.price), 8f, true)
+                if (line.product.size.isNotBlank()) " (Size \${line.product.size})" else ""
+            val itemLines = wrapText(itemTitle, paint(tableFont), itemWidth).ifEmpty { listOf("") }
+            val rowHeight = itemLines.size * (tableFont + 2.2f) + 3f
+            operations += rowHeight to { canvas, y ->
+                itemLines.forEachIndexed { lineIndex, itemLine ->
+                    canvas.drawText(itemLine, itemX, y + lineIndex * (tableFont + 2.2f), paint(tableFont))
+                }
+                canvas.drawText(line.qty.toString(), qtyCenter, y, paint(tableFont, false, Paint.Align.CENTER))
+                canvas.drawText(money(line.price), rateRight, y, paint(tableFont, false, Paint.Align.RIGHT))
+                canvas.drawText(money(line.qty * line.price), totalRight, y, paint(tableFont, false, Paint.Align.RIGHT))
+            }
+            requiredHeight += rowHeight
             addRule()
         }
 
-        addPair("Subtotal", money(subtotal()), 8f)
-        addPair("Discount", money(discount), 8f)
-        if (gstEnabled) addPair("GST (${gstPercent}%)", money(taxable() * gstPercent / 100.0), 8f)
+        addPair("Subtotal:", money(subtotal()), 7.6f)
+        addPair("Discount:", money(discount), 7.6f)
+        if (gstEnabled) addPair("GST (\${gstPercent}%):", money(taxable() * gstPercent / 100.0), 7.6f)
+        addPair("TOTAL:", money(total()), 8.4f, true)
+        addWrapped("Payment: $paymentMode", 7.6f, false, Paint.Align.LEFT, 2f)
         addRule()
-        addPair("GRAND TOTAL", money(total()), 10f, true)
-        addWrapped("Payment: $paymentMode", 8f, false, Paint.Align.LEFT, 2f)
-        addRule()
-        addWrapped("Thank you for shopping!", 8.5f, true, Paint.Align.CENTER, 1f)
-        addWrapped("Please visit again.", 7.8f, false, Paint.Align.CENTER, 2f)
+        addWrapped("Thank you for shopping!", 8f, true, Paint.Align.CENTER, 1f)
+        addWrapped("Please visit again.", 7.6f, false, Paint.Align.CENTER, 2f)
 
-        // Force portrait: page height must always be greater than the 70 mm width.
-        // Keep the height content-driven, with a portrait minimum for very short bills.
+        // Portrait page: 70 mm wide, content-driven length.
         val pageHeight = max(width + 40, requiredHeight.toInt() + 24)
         val page = doc.startPage(PdfDocument.PageInfo.Builder(width, pageHeight, 1).create())
         var y = 12f
