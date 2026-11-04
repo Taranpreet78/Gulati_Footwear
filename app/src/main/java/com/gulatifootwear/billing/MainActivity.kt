@@ -189,12 +189,12 @@ class MainActivity : AppCompatActivity() {
         val info = card()
         info.addView(label("SHOP DETAILS", 12f))
         info.addView(label("$SHOP_ADDRESS\nPhone: $SHOP_PHONE\nUPI: $SHOP_UPI", 13f))
-        info.addView(label("Offline mode • Barcode scanner • 80 mm PDF receipts", 12f))
+        info.addView(label("Offline mode • Barcode scanner • 70 mm PDF receipts", 12f))
     }
 
     private fun shopDetails() {
         AlertDialog.Builder(this).setTitle(SHOP_NAME)
-            .setMessage("$SHOP_ADDRESS\nPhone: $SHOP_PHONE\nUPI: $SHOP_UPI\n\nReceipt width: 80 mm\nGST: optional")
+            .setMessage("$SHOP_ADDRESS\nPhone: $SHOP_PHONE\nUPI: $SHOP_UPI\n\nReceipt width: 70 mm (7 cm)\nGST: optional")
             .setPositiveButton("OK", null).show()
     }
 
@@ -593,7 +593,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun generatePdf(invoiceNo: String, stamp: Long): File {
         // 7 cm receipt width, similar to a compact household utility bill.
-        val width = (7.0 / 25.4 * 72.0).toInt()
+        // Convert 70 mm (7 cm) to PDF points (72 points per inch).
+        val width = (70.0 / 25.4 * 72.0).toInt()
         val left = 5f
         val right = width - 5f
         val usable = right - left
