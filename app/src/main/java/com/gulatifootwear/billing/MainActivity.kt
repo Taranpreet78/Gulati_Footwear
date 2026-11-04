@@ -726,7 +726,7 @@ class MainActivity : AppCompatActivity() {
 
         cart.forEach { line ->
             val itemTitle = line.product.name +
-                if (line.product.size.isNotBlank()) " (Size \${line.product.size})" else ""
+                if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
             val itemLines = wrapText(itemTitle, paint(tableFont), itemWidth).ifEmpty { listOf("") }
             val rowHeight = itemLines.size * (tableFont + 2.2f) + 3f
             operations += rowHeight to { canvas, y ->
@@ -743,7 +743,7 @@ class MainActivity : AppCompatActivity() {
 
         addPair("Subtotal:", money(subtotal()), 7.6f)
         addPair("Discount:", money(discount), 7.6f)
-        if (gstEnabled) addPair("GST (\${gstPercent}%):", money(taxable() * gstPercent / 100.0), 7.6f)
+        if (gstEnabled) addPair("GST (${gstPercent}%):", money(taxable() * gstPercent / 100.0), 7.6f)
         addPair("TOTAL:", money(total()), 8.4f, true)
         addWrapped("Payment: $paymentMode", 7.6f, false, Paint.Align.LEFT, 2f)
         addRule()
