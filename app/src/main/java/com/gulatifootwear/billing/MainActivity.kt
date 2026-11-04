@@ -699,16 +699,16 @@ class MainActivity : AppCompatActivity() {
         // Full-width item descriptions prevent cramped columns on portable printers.
         cart.forEach { line ->
             val itemTitle = line.product.name +
-                if (line.product.size.isNotBlank()) " (Size \${line.product.size})" else ""
+                if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
             addWrapped(itemTitle, 8.2f, true, Paint.Align.LEFT, 1.5f)
-            addWrapped("Qty: \${line.qty}    Rate: \${money(line.price)}", 7.6f)
+            addWrapped("Qty: ${line.qty}    Rate: ${money(line.price)}", 7.6f)
             addPair("Amount", money(line.qty * line.price), 8f, true)
             addRule()
         }
 
         addPair("Subtotal", money(subtotal()), 8f)
         addPair("Discount", money(discount), 8f)
-        if (gstEnabled) addPair("GST (\${gstPercent}%)", money(taxable() * gstPercent / 100.0), 8f)
+        if (gstEnabled) addPair("GST (${gstPercent}%)", money(taxable() * gstPercent / 100.0), 8f)
         addRule()
         addPair("GRAND TOTAL", money(total()), 10f, true)
         addWrapped("Payment: $paymentMode", 8f, false, Paint.Align.LEFT, 2f)
