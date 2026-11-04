@@ -716,7 +716,9 @@ class MainActivity : AppCompatActivity() {
         addWrapped("Thank you for shopping!", 8.5f, true, Paint.Align.CENTER, 1f)
         addWrapped("Please visit again.", 7.8f, false, Paint.Align.CENTER, 2f)
 
-        val pageHeight = max(180, requiredHeight.toInt() + 18)
+        // Force portrait: page height must always be greater than the 70 mm width.
+        // Keep the height content-driven, with a portrait minimum for very short bills.
+        val pageHeight = max(width + 40, requiredHeight.toInt() + 24)
         val page = doc.startPage(PdfDocument.PageInfo.Builder(width, pageHeight, 1).create())
         var y = 12f
         operations.forEach { (height, draw) ->
