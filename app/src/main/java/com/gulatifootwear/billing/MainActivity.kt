@@ -49,10 +49,13 @@ private val INK = Color.rgb(30, 43, 36)
 
 data class CartLine(val product: Product, var qty: Int = 1, var price: Double = product.sellingPrice)
 
+private data class ScreenSnapshot(val root: View, val body: LinearLayout, val drawer: DrawerLayout?)
+
 class MainActivity : AppCompatActivity() {
     private lateinit var dao: ShopDao
     private lateinit var body: LinearLayout
     private var drawerLayout: DrawerLayout? = null
+    private val pageStack = mutableListOf<ScreenSnapshot>()
     private val cart = mutableListOf<CartLine>()
     private var gstEnabled = false
     private var gstPercent = 5.0
@@ -75,19 +78,47 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         dao = ShopDatabase.get(this).dao()
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val drawer = drawerLayout
+                if (drawer?.isDrawerOpen(Gravity.LEFT) == true) drawer.closeDrawer(Gravity.LEFT)
+                else if (!restorePreviousScreen()) finish()
+            }
+        })
         showHome()
+    }
+
+    private fun restorePreviousScreen(): Boolean {
+        if (pageStack.isEmpty()) return false
+        val previous = pageStack.removeAt(pageStack.lastIndex)
+        setContentView(previous.root)
+        body = previous.body
+        drawerLayout = previous.drawer
+        return true
     }
 
     private fun rounded(color: Int, radius: Float = 18f): GradientDrawable =
         GradientDrawable().apply { setColor(color); cornerRadius = radius; setStroke(1, Color.rgb(229, 235, 226)) }
 
-    private fun baseScreen(title: String) {
+    private fun baseScreen(title: String, replaceCurrent: Boolean = false) {
+        val contentRoot = findViewById<android.view.ViewGroup>(android.R.id.content)
+        val previousRoot = contentRoot?.getChildAt(0)
+        if (!replaceCurrent && ::body.isInitialized && previousRoot != null) {
+            pageStack.add(ScreenSnapshot(previousRoot, body, drawerLayout))
+        }
         val drawer = DrawerLayout(this)
         drawerLayout = drawer
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(BG) }
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(16, 12, 12, 12); setBackgroundColor(GREEN)
+        }
+        if (pageStack.isNotEmpty()) {
+            val back = TextView(this).apply {
+                text = "‹"; textSize = 34f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                setPadding(0, 0, 14, 2); setOnClickListener { restorePreviousScreen() }
+            }
+            header.addView(back, LinearLayout.LayoutParams(-2, -2))
         }
         val titleView = TextView(this).apply {
             text = title; textSize = 20f; setTextColor(Color.WHITE); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
@@ -204,8 +235,8 @@ class MainActivity : AppCompatActivity() {
         renderBill()
     }
 
-    private fun renderBill() {
-        baseScreen("Create bill")
+    private fun renderBill(replaceCurrent: Boolean = false) {
+        baseScreen("Create bill", replaceCurrent)
         button("▦  Scan barcode", { startScan() })
         button("＋  Enter barcode / SKU", { manualBarcodeDialog() }, false)
         body.addView(label("SEARCH PRODUCTS", 12f))
@@ -250,9 +281,9 @@ class MainActivity : AppCompatActivity() {
                 text = caption; gravity = Gravity.CENTER; textSize = 17f; setTextColor(GREEN)
                 setPadding(12, 8, 12, 8); background = rounded(BG, 10f); setOnClickListener { action() }
             }
-            controls.addView(smallButton("−") { if (line.qty > 1) line.qty-- else cart.removeAt(index); renderBill() })
+            controls.addView(smallButton("−") { if (line.qty > 1) line.qty-- else cart.removeAt(index); renderBill(true) })
             controls.addView(TextView(this).apply { text = "  ${line.qty}  "; textSize = 16f; setTextColor(INK) })
-            controls.addView(smallButton("+") { line.qty++; renderBill() })
+            controls.addView(smallButton("+") { line.qty++; renderBill(true) })
             controls.addView(smallButton("Price") { editPrice(index) })
             controls.addView(smallButton("×") { cart.removeAt(index); renderBill() })
             row.addView(controls)
@@ -277,7 +308,7 @@ class MainActivity : AppCompatActivity() {
             customerName = nameField.text.toString().trim(); customerPhone = phoneField.text.toString().trim()
             discount = discountField.text.toString().toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
             gstEnabled = gstCheck.isChecked; gstPercent = gstField.text.toString().toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 5.0
-            paymentMode = payment.selectedItem?.toString() ?: "Cash"; renderBill()
+            paymentMode = payment.selectedItem?.toString() ?: "Cash"; renderBill(true)
         }, false)
         button("✓  Generate PDF & save bill", {
             customerName = nameField.text.toString().trim(); customerPhone = phoneField.text.toString().trim()
@@ -291,7 +322,7 @@ class MainActivity : AppCompatActivity() {
     private fun addProductToCart(product: Product) {
         val existing = cart.find { it.product.id == product.id }
         if (existing != null) existing.qty++ else cart.add(CartLine(product))
-        renderBill()
+        renderBill(true)
     }
 
     private fun subtotal() = cart.sumOf { it.qty * it.price }
@@ -336,7 +367,7 @@ class MainActivity : AppCompatActivity() {
                         size = size.text.toString().trim(), purchasePrice = buy.text.toString().toDoubleOrNull() ?: 0.0,
                         sellingPrice = selling, stock = stock.text.toString().toIntOrNull()?.coerceAtLeast(0) ?: 0)
                     val id = withContext(Dispatchers.IO) { dao.saveProduct(product) }
-                    if (addToCart) { cart.add(CartLine(product.copy(id = id))); renderBill() } else inventoryScreen()
+                    if (addToCart) { cart.add(CartLine(product.copy(id = id))); renderBill(true) } else inventoryScreen()
                 }
             }.setNegativeButton("Cancel", null).show()
     }
@@ -344,7 +375,7 @@ class MainActivity : AppCompatActivity() {
     private fun editPrice(index: Int) {
         val line = cart[index]; val input = field("Selling price ₹", line.price.toString(), InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
         AlertDialog.Builder(this).setTitle("Edit item price").setView(input)
-            .setPositiveButton("Save") { _, _ -> input.text.toString().toDoubleOrNull()?.takeIf { it >= 0 }?.let { line.price = it }; renderBill() }
+            .setPositiveButton("Save") { _, _ -> input.text.toString().toDoubleOrNull()?.takeIf { it >= 0 }?.let { line.price = it }; renderBill(true) }
             .setNegativeButton("Cancel", null).show()
     }
 
@@ -592,114 +623,102 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun generatePdf(invoiceNo: String, stamp: Long): File {
-        // 7 cm receipt width, similar to a compact household utility bill.
-        // Convert 70 mm (7 cm) to PDF points (72 points per inch).
+        // Exact 70 mm paper width for compact handheld thermal printers.
         val width = (70.0 / 25.4 * 72.0).toInt()
-        val left = 5f
-        val right = width - 5f
-        val usable = right - left
+        val left = 8f
+        val right = width - 8f
+        val printableWidth = right - left
         val doc = PdfDocument()
-        val operations = mutableListOf<Pair<Float, (android.graphics.Canvas, Float) -> Unit>>()
-        var requiredHeight = 18f
+        val operations = mutableListOf<Pair<Float, (Canvas, Float) -> Unit>>()
+        var requiredHeight = 16f
 
-        fun makePaint(size: Float, bold: Boolean = false, align: Paint.Align = Paint.Align.LEFT): Paint =
+        fun paint(size: Float, bold: Boolean = false, align: Paint.Align = Paint.Align.LEFT) =
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.BLACK
                 textSize = size
-                typeface = Typeface.create(Typeface.SANS_SERIF, if (bold) Typeface.BOLD else Typeface.NORMAL)
+                typeface = Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
                 textAlign = align
             }
 
-        fun drawFit(canvas: android.graphics.Canvas, text: String, x: Float, y: Float,
-                    maxWidth: Float, size: Float, bold: Boolean = false, align: Paint.Align = Paint.Align.LEFT) {
-            val p = makePaint(size, bold, align)
-            val measured = p.measureText(text)
-            if (measured > maxWidth && measured > 0f) p.textSize = (size * maxWidth / measured).coerceAtLeast(4.2f)
-            canvas.drawText(text, x, y, p)
-        }
-
-        fun addText(text: String, size: Float = 5.8f, bold: Boolean = false,
-                    align: Paint.Align = Paint.Align.LEFT, gap: Float = 2f) {
-            val p = makePaint(size, bold, align)
-            val h = size + gap
-            operations += h to { canvas, y ->
-                val x = if (align == Paint.Align.CENTER) width / 2f else if (align == Paint.Align.RIGHT) right else left
-                drawFit(canvas, text, x, y, usable, size, bold, align)
-            }
-            requiredHeight += h
-        }
-
-        fun addWrapped(text: String, size: Float = 5.6f, bold: Boolean = false,
-                       align: Paint.Align = Paint.Align.LEFT, gap: Float = 1f) {
-            val p = makePaint(size, bold)
-            wrapText(text, p, usable).forEach { addText(it, size, bold, align, gap) }
-        }
-
-        // Shop heading and details.
-        addText(SHOP_NAME.uppercase(Locale.getDefault()), 9f, true, Paint.Align.CENTER, 2f)
-        addWrapped(SHOP_ADDRESS, 5.5f, false, Paint.Align.CENTER, 1f)
-        addText("Phone: $SHOP_PHONE", 5.5f, false, Paint.Align.CENTER, 1f)
-        addText("UPI: $SHOP_UPI", 5.2f, false, Paint.Align.CENTER, 3f)
-        addText("----------------------------------------", 5.2f, false, Paint.Align.CENTER, 3f)
-
-        // Invoice/customer information, left aligned and wrapped to the receipt width.
-        addWrapped("Bill No: $invoiceNo", 5.7f, true)
-        addWrapped("Date: " + SimpleDateFormat("dd-MM-yyyy HH:mm", Locale("en", "IN")).format(Date(stamp)), 5.5f)
-        if (customerName.isNotBlank()) addWrapped("Customer: $customerName", 5.5f)
-        if (customerPhone.isNotBlank()) addWrapped("Phone: $customerPhone", 5.5f)
-        addText("----------------------------------------", 5.2f, false, Paint.Align.CENTER, 3f)
-
-        // Borderless columns sized for the 7 cm paper.
-        val detailRight = left + usable * 0.43f
-        val qtyRight = left + usable * 0.57f
-        val rateRight = left + usable * 0.78f
-        val totalRight = right
-        val detailWidth = detailRight - left - 2f
-        val qtyWidth = qtyRight - detailRight - 2f
-        val rateWidth = rateRight - qtyRight - 2f
-        val totalWidth = totalRight - rateRight - 1f
-
-        val headerHeight = 9f
-        operations += headerHeight to { canvas, y ->
-            drawFit(canvas, "Item detail", left, y, detailWidth, 5.4f, true)
-            drawFit(canvas, "Qty", qtyRight, y, qtyWidth, 5.4f, true, Paint.Align.RIGHT)
-            drawFit(canvas, "Rate", rateRight, y, rateWidth, 5.4f, true, Paint.Align.RIGHT)
-            drawFit(canvas, "Total", totalRight, y, totalWidth, 5.4f, true, Paint.Align.RIGHT)
-        }
-        requiredHeight += headerHeight
-
-        cart.forEach { line ->
-            val detail = line.product.name +
-                if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
-            val detailPaint = makePaint(5.3f)
-            val detailLines = wrapText(detail, detailPaint, detailWidth).ifEmpty { listOf("") }
-            detailLines.forEachIndexed { index, part ->
-                val h = 6.6f
-                operations += h to { canvas, y ->
-                    drawFit(canvas, part, left, y, detailWidth, 5.3f)
-                    if (index == 0) {
-                        drawFit(canvas, line.qty.toString(), qtyRight, y, qtyWidth, 5.1f, false, Paint.Align.RIGHT)
-                        drawFit(canvas, money(line.price), rateRight, y, rateWidth, 5.1f, false, Paint.Align.RIGHT)
-                        drawFit(canvas, money(line.qty * line.price), totalRight, y, totalWidth, 5.1f, false, Paint.Align.RIGHT)
+        fun addWrapped(text: String, size: Float = 8f, bold: Boolean = false,
+                       align: Paint.Align = Paint.Align.LEFT, gap: Float = 2f) {
+            val p = paint(size, bold)
+            val lines = wrapText(text, p, printableWidth).ifEmpty { listOf("") }
+            lines.forEach { line ->
+                val height = size + gap
+                operations += height to { canvas, y ->
+                    val x = when (align) {
+                        Paint.Align.CENTER -> width / 2f
+                        Paint.Align.RIGHT -> right
+                        else -> left
                     }
+                    canvas.drawText(line, x, y, paint(size, bold, align))
                 }
-                requiredHeight += h
+                requiredHeight += height
             }
         }
 
-        addText("----------------------------------------", 5.2f, false, Paint.Align.CENTER, 3f)
-        addText("Subtotal: ${money(subtotal())}", 5.8f)
-        addText("Discount: ${money(discount)}", 5.8f)
-        if (gstEnabled) addText("GST (${gstPercent}%): ${money(taxable() * gstPercent / 100.0)}", 5.8f)
-        addText("TOTAL: ${money(total())}", 7f, true, Paint.Align.LEFT, 3f)
-        addText("Payment: $paymentMode", 5.6f)
-        addText("----------------------------------------", 5.2f, false, Paint.Align.CENTER, 3f)
-        addText("Thank you for shopping!", 5.8f, true, Paint.Align.CENTER, 1f)
-        addText("Please visit again.", 5.5f, false, Paint.Align.CENTER, 2f)
+        fun addRule() {
+            val height = 7f
+            operations += height to { canvas, y ->
+                val rulePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.DKGRAY
+                    strokeWidth = 0.55f
+                }
+                canvas.drawLine(left, y - 2f, right, y - 2f, rulePaint)
+            }
+            requiredHeight += height
+        }
 
-        val pageHeight = max(240, requiredHeight.toInt() + 14)
+        fun addPair(label: String, value: String, size: Float = 8f, bold: Boolean = false) {
+            val height = size + 3f
+            operations += height to { canvas, y ->
+                val labelPaint = paint(size, bold)
+                val valuePaint = paint(size, bold, Paint.Align.RIGHT)
+                val valueWidth = valuePaint.measureText(value)
+                val labelWidth = (printableWidth - valueWidth - 5f).coerceAtLeast(20f)
+                val labelLines = wrapText(label, labelPaint, labelWidth)
+                canvas.drawText(labelLines.firstOrNull() ?: "", left, y, labelPaint)
+                canvas.drawText(value, right, y, valuePaint)
+            }
+            requiredHeight += height
+        }
+
+        addWrapped(SHOP_NAME.uppercase(Locale.getDefault()), 11f, true, Paint.Align.CENTER, 2f)
+        addWrapped(SHOP_ADDRESS, 7.8f, false, Paint.Align.CENTER, 1.5f)
+        addWrapped("Phone: $SHOP_PHONE", 7.8f, false, Paint.Align.CENTER, 1f)
+        addWrapped("UPI: $SHOP_UPI", 7.5f, false, Paint.Align.CENTER, 2f)
+        addRule()
+
+        addWrapped("BILL NO: $invoiceNo", 8f, true)
+        addWrapped("Date: " + SimpleDateFormat("dd-MM-yyyy  HH:mm", Locale("en", "IN")).format(Date(stamp)), 7.8f)
+        if (customerName.isNotBlank()) addWrapped("Customer: $customerName", 7.8f)
+        if (customerPhone.isNotBlank()) addWrapped("Phone: $customerPhone", 7.8f)
+        addRule()
+
+        // Full-width item descriptions prevent cramped columns on portable printers.
+        cart.forEach { line ->
+            val itemTitle = line.product.name +
+                if (line.product.size.isNotBlank()) " (Size \${line.product.size})" else ""
+            addWrapped(itemTitle, 8.2f, true, Paint.Align.LEFT, 1.5f)
+            addWrapped("Qty: \${line.qty}    Rate: \${money(line.price)}", 7.6f)
+            addPair("Amount", money(line.qty * line.price), 8f, true)
+            addRule()
+        }
+
+        addPair("Subtotal", money(subtotal()), 8f)
+        addPair("Discount", money(discount), 8f)
+        if (gstEnabled) addPair("GST (\${gstPercent}%)", money(taxable() * gstPercent / 100.0), 8f)
+        addRule()
+        addPair("GRAND TOTAL", money(total()), 10f, true)
+        addWrapped("Payment: $paymentMode", 8f, false, Paint.Align.LEFT, 2f)
+        addRule()
+        addWrapped("Thank you for shopping!", 8.5f, true, Paint.Align.CENTER, 1f)
+        addWrapped("Please visit again.", 7.8f, false, Paint.Align.CENTER, 2f)
+
+        val pageHeight = max(180, requiredHeight.toInt() + 18)
         val page = doc.startPage(PdfDocument.PageInfo.Builder(width, pageHeight, 1).create())
-        var y = 13f
+        var y = 12f
         operations.forEach { (height, draw) ->
             draw(page.canvas, y)
             y += height
@@ -714,14 +733,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun wrapText(s: String, paint: Paint, maxWidth: Float): List<String> {
-        if (paint.measureText(s) <= maxWidth) return listOf(s)
-        val out = mutableListOf<String>(); var current = ""
-        s.split(" ").forEach { word ->
-            val next = if (current.isEmpty()) word else "$current $word"
-            if (paint.measureText(next) > maxWidth && current.isNotEmpty()) { out += current; current = word } else current = next
+        if (s.isBlank()) return listOf("")
+        val output = mutableListOf<String>()
+        var current = ""
+        s.trim().split(Regex("\\s+")).forEach { word ->
+            val pieces = mutableListOf<String>()
+            var piece = ""
+            word.forEach { character ->
+                val candidate = piece + character
+                if (piece.isNotEmpty() && paint.measureText(candidate) > maxWidth) {
+                    pieces += piece
+                    piece = character.toString()
+                } else piece = candidate
+            }
+            if (piece.isNotEmpty()) pieces += piece
+            pieces.forEach { part ->
+                val candidate = if (current.isEmpty()) part else "$current $part"
+                if (current.isNotEmpty() && paint.measureText(candidate) > maxWidth) {
+                    output += current
+                    current = part
+                } else current = candidate
+            }
         }
-        if (current.isNotEmpty()) out += current
-        return out
+        if (current.isNotEmpty()) output += current
+        return output
     }
 
     private fun sharePdf(file: File, invoiceNo: String) {
