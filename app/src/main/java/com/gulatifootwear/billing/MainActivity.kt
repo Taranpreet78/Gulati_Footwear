@@ -285,7 +285,7 @@ class MainActivity : AppCompatActivity() {
             controls.addView(TextView(this).apply { text = "  ${line.qty}  "; textSize = 16f; setTextColor(INK) })
             controls.addView(smallButton("+") { line.qty++; renderBill(true) })
             controls.addView(smallButton("Price") { editPrice(index) })
-            controls.addView(smallButton("×") { cart.removeAt(index); renderBill() })
+            controls.addView(smallButton("×") { cart.removeAt(index); renderBill(true) })
             row.addView(controls)
         }
         val totals = card()
