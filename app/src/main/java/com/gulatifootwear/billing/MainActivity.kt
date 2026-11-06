@@ -324,6 +324,10 @@ class MainActivity : AppCompatActivity() {
         payment.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf("Cash", "UPI", "Card", "Other"))
         payment.setSelection(listOf("Cash", "UPI", "Card", "Other").indexOf(paymentMode).coerceAtLeast(0))
         totals.addView(label("Payment method")); totals.addView(payment)
+        payment.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) { paymentMode = payment.selectedItem?.toString() ?: "Cash" }
+        }
         totals.addView(TextView(this).apply {
             text = "GRAND TOTAL   ${money(total())}"; textSize = 22f; setTextColor(GREEN)
             typeface = Typeface.create("sans-serif", Typeface.BOLD); setPadding(0, 12, 0, 5)
