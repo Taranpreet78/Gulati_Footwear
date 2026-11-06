@@ -72,11 +72,42 @@ interface ShopDao {
     @Query("UPDATE products SET stock = stock - :qty WHERE id = :productId AND stock >= :qty")
     suspend fun reduceStock(productId: Long, qty: Int): Int
 
+    @Query("UPDATE products SET stock = stock + :qty WHERE id = :productId")
+    suspend fun increaseStock(productId: Long, qty: Int): Int
+    @Query("SELECT COUNT(*) FROM products WHERE id = :productId")
+    suspend fun productExists(productId: Long): Int
+    @Query("DELETE FROM products WHERE id = :productId")
+    suspend fun deleteProduct(productId: Long): Int
+
     @Query("SELECT * FROM invoices ORDER BY createdAt DESC")
     suspend fun allInvoices(): List<Invoice>
 
     @Insert
     suspend fun saveInvoice(invoice: Invoice): Long
+
+    @Update
+    suspend fun updateInvoice(invoice: Invoice)
+    @Query("SELECT * FROM invoice_items WHERE invoiceId = :invoiceId ORDER BY id")
+    suspend fun invoiceItems(invoiceId: Long): List<InvoiceItem>
+    @Query("DELETE FROM invoice_items WHERE invoiceId = :invoiceId")
+    suspend fun deleteInvoiceItems(invoiceId: Long)
+    @Query("DELETE FROM invoices WHERE id = :invoiceId")
+    suspend fun deleteInvoice(invoiceId: Long): Int
+
+    @Transaction
+    suspend fun removeInvoiceAndRestoreStock(invoiceId: Long) {
+        invoiceItems(invoiceId).forEach { increaseStock(it.productId, it.quantity) }
+        deleteInvoiceItems(invoiceId); deleteInvoice(invoiceId)
+    }
+    @Transaction
+    suspend fun replaceInvoiceAndAdjustStock(invoice: Invoice, newItems: List<InvoiceItem>) {
+        invoiceItems(invoice.id).forEach { increaseStock(it.productId, it.quantity) }
+        newItems.forEach { item ->
+            if (item.productId > 0 && productExists(item.productId) > 0 && reduceStock(item.productId, item.quantity) == 0)
+                throw IllegalStateException("Not enough stock for " + item.productName)
+        }
+        updateInvoice(invoice); deleteInvoiceItems(invoice.id); saveInvoiceItems(newItems)
+    }
 
     @Insert
     suspend fun saveInvoiceItems(items: List<InvoiceItem>)
@@ -89,6 +120,11 @@ interface ShopDao {
 
     @Insert
     suspend fun addExpense(expense: ShopExpense): Long
+
+    @Update
+    suspend fun updateExpense(expense: ShopExpense)
+    @Query("DELETE FROM expenses WHERE id = :expenseId")
+    suspend fun deleteExpense(expenseId: Long): Int
 
     @Query("SELECT * FROM invoices WHERE createdAt BETWEEN :from AND :to ORDER BY createdAt DESC")
     suspend fun invoicesBetween(from: Long, to: Long): List<Invoice>
