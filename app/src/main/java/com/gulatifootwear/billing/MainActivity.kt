@@ -305,6 +305,11 @@ class MainActivity : AppCompatActivity() {
         totals.addView(label("Subtotal     ${money(subtotal())}", 16f))
         val discountField = field("Discount amount ₹", if (discount > 0) discount.toString() else "", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
         totals.addView(discountField)
+        discountField.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { discount = s?.toString()?.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0 }
+            override fun afterTextChanged(s: Editable?) {}
+        })
         val gstCheck = CheckBox(this).apply { text = "Apply GST"; isChecked = gstEnabled; setTextColor(INK) }
         totals.addView(gstCheck)
         val gstField = field("GST %", gstPercent.toString(), InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
