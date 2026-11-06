@@ -231,7 +231,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun newBill() {
-        if (cart.isNotEmpty() && editingInvoice == null) {
+        if (cart.isNotEmpty()) {
             AlertDialog.Builder(this).setTitle("Continue current bill?")
                 .setMessage("A bill draft is already in progress. Resume it or start a new bill?")
                 .setPositiveButton("Resume draft") { _, _ -> renderBill() }
