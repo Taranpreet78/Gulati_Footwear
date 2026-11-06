@@ -105,7 +105,7 @@ class MainActivity : AppCompatActivity() {
         if (title != "Gulati Footwear") {
             header.addView(TextView(this).apply {
                 text = "‹"; textSize = 32f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
-                setPadding(4, 0, 14, 0); setOnClickListener { onBackPressedDispatcher.onBackPressed() }
+                setPadding(4, 0, 14, 0); setOnClickListener { showHome() }
                 contentDescription = "Back"
             }, LinearLayout.LayoutParams(-2, -2))
         }
