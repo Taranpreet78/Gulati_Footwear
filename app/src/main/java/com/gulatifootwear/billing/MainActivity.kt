@@ -122,7 +122,7 @@ class MainActivity : AppCompatActivity() {
             contentDescription = "Gulati Footwear logo"
         }, LinearLayout.LayoutParams(58, 58).apply { rightMargin = 12 })
         brandHeader.addView(TextView(this).apply {
-            text = "GULATI\\nFOOTWEAR"; textSize = 21f; setTextColor(Color.BLACK)
+            text = "GULATI\nFOOTWEAR"; textSize = 21f; setTextColor(Color.BLACK)
             typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
         })
         nav.addView(brandHeader)
