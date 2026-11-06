@@ -89,6 +89,12 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(16, 12, 12, 12); setBackgroundColor(GREEN)
         }
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.ic_gulati_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "Gulati Footwear logo"
+        }
+        header.addView(logo, LinearLayout.LayoutParams(42, 42).apply { rightMargin = 12 })
         val titleView = TextView(this).apply {
             text = title; textSize = 20f; setTextColor(Color.WHITE); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         }
@@ -105,10 +111,21 @@ class MainActivity : AppCompatActivity() {
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         drawer.addView(root, DrawerLayout.LayoutParams(-1, -1))
         val nav = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE); setPadding(18, 24, 18, 18) }
-        nav.addView(TextView(this).apply {
-            text = "GULATI\nFOOTWEAR"; textSize = 23f; setTextColor(GREEN)
-            typeface = Typeface.DEFAULT_BOLD; setPadding(8, 10, 8, 24)
+        val brandHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(4, 4, 4, 22)
+        }
+        brandHeader.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_gulati_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "Gulati Footwear logo"
+        }, LinearLayout.LayoutParams(58, 58).apply { rightMargin = 12 })
+        brandHeader.addView(TextView(this).apply {
+            text = "GULATI\\nFOOTWEAR"; textSize = 21f; setTextColor(Color.BLACK)
+            typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
         })
+        nav.addView(brandHeader)
         val navItems = listOf(
             "⌂   Dashboard" to { showHome() },
             "＋   New bill" to { newBill() },
