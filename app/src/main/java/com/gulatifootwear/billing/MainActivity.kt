@@ -312,8 +312,14 @@ class MainActivity : AppCompatActivity() {
         })
         val gstCheck = CheckBox(this).apply { text = "Apply GST"; isChecked = gstEnabled; setTextColor(INK) }
         totals.addView(gstCheck)
+        gstCheck.setOnCheckedChangeListener { _, checked -> gstEnabled = checked }
         val gstField = field("GST %", gstPercent.toString(), InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
         totals.addView(gstField)
+        gstField.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { gstPercent = s?.toString()?.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 5.0 }
+            override fun afterTextChanged(s: Editable?) {}
+        })
         val payment = Spinner(this)
         payment.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf("Cash", "UPI", "Card", "Other"))
         payment.setSelection(listOf("Cash", "UPI", "Card", "Other").indexOf(paymentMode).coerceAtLeast(0))
