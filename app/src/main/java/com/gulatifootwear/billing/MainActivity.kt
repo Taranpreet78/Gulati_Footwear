@@ -787,6 +787,66 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun backupScreen() {
+        baseScreen("Database backup")
+        body.addView(label("Choose a date range. The backup includes current product inventory and bills, bill items and expenses from the selected dates.", 13f))
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        var from = java.util.Calendar.getInstance().apply { add(java.util.Calendar.DAY_OF_MONTH, -30) }
+        var to = java.util.Calendar.getInstance()
+        val fromText = label("From date: ${fmt.format(from.time)}", 16f)
+        val toText = label("To date: ${fmt.format(to.time)}", 16f)
+        fun pick(initial: java.util.Calendar, update: (java.util.Calendar) -> Unit) {
+            DatePickerDialog(this, { _, y, m, d ->
+                val chosen = java.util.Calendar.getInstance().apply { set(y, m, d, 0, 0, 0); set(java.util.Calendar.MILLISECOND, 0) }
+                update(chosen)
+                fromText.text = "From date: ${fmt.format(from.time)}"
+                toText.text = "To date: ${fmt.format(to.time)}"
+            }, initial.get(java.util.Calendar.YEAR), initial.get(java.util.Calendar.MONTH), initial.get(java.util.Calendar.DAY_OF_MONTH)).show()
+        }
+        button("Choose FROM date", { pick(from) { from = it } }, false); body.addView(fromText)
+        button("Choose TO date", { pick(to) { to = it } }, false); body.addView(toText)
+        button("✉  Create backup and share by email", {
+            val start = from.timeInMillis
+            val end = (to.clone() as java.util.Calendar).apply {
+                set(java.util.Calendar.HOUR_OF_DAY, 23); set(java.util.Calendar.MINUTE, 59)
+                set(java.util.Calendar.SECOND, 59); set(java.util.Calendar.MILLISECOND, 999)
+            }
+            if (start > end.timeInMillis) { toast("From date must be before To date"); return@button }
+            lifecycleScope.launch {
+                try {
+                    val file = withContext(Dispatchers.IO) {
+                        val products = dao.allProducts()
+                        val invoices = dao.invoicesBetween(start, end.timeInMillis)
+                        val expenses = dao.expenses(start, end.timeInMillis)
+                        val lines = invoices.flatMap { dao.invoiceItems(it.id) }
+                        val json = JSONObject().put("app", SHOP_NAME).put("backupCreatedAt", System.currentTimeMillis())
+                            .put("from", fmt.format(from.time)).put("to", fmt.format(to.time))
+                        json.put("products", JSONArray().apply { products.forEach { put(JSONObject().put("id",it.id).put("barcode",it.barcode).put("name",it.name).put("brand",it.brand).put("size",it.size).put("purchasePrice",it.purchasePrice).put("sellingPrice",it.sellingPrice).put("stock",it.stock)) } })
+                        json.put("invoices", JSONArray().apply { invoices.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("invoiceNo",it.invoiceNo).put("customerName",it.customerName).put("customerPhone",it.customerPhone).put("subtotal",it.subtotal).put("discount",it.discount).put("gstPercent",it.gstPercent).put("total",it.total).put("paymentMode",it.paymentMode)) } })
+                        json.put("invoiceItems", JSONArray().apply { lines.forEach { put(JSONObject().put("id",it.id).put("invoiceId",it.invoiceId).put("productId",it.productId).put("barcode",it.barcode).put("productName",it.productName).put("size",it.size).put("quantity",it.quantity).put("sellingPrice",it.sellingPrice).put("purchasePrice",it.purchasePrice).put("createdAt",it.createdAt)) } })
+                        json.put("expenses", JSONArray().apply { expenses.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("title",it.title).put("amount",it.amount).put("note",it.note)) } })
+                        val dir = File(cacheDir, "backups").apply { mkdirs() }
+                        val out = File(dir, "Gulati_Backup_${fmt.format(from.time)}_to_${fmt.format(to.time)}.zip")
+                        ZipOutputStream(FileOutputStream(out)).use { z -> z.putNextEntry(java.util.zip.ZipEntry("backup.json")); z.write(json.toString(2).toByteArray(Charsets.UTF_8)); z.closeEntry() }
+                        out
+                    }
+                    val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", file)
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/zip"; putExtra(Intent.EXTRA_SUBJECT, "Gulati Footwear database backup")
+                        putExtra(Intent.EXTRA_TEXT, "Backup: ${fmt.format(from.time)} to ${fmt.format(to.time)}")
+                        putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(Intent.createChooser(send, "Send database backup"))
+                } catch (e: Exception) { toast("Backup failed: ${e.message}") }
+            }
+        })
+        body.addView(label("This ZIP is a portable JSON data export, not a raw database image.", 12f))
+    }
+
+    override fun onBackPressed() {
+        if (currentScreen != "Gulati Footwear") showHome() else super.onBackPressed()
+    }
+
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
