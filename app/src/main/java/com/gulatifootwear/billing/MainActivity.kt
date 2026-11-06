@@ -629,6 +629,57 @@ class MainActivity : AppCompatActivity() {
             }.setNegativeButton("Cancel", null).show()
     }
 
+    private fun editExpenseDialog(expense: ShopExpense, period: String) {
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(18, 5, 18, 0) }
+        val title = field("Expense name", expense.title)
+        val amount = field("Amount ₹", expense.amount.toString(), InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
+        val note = field("Note", expense.note)
+        panel.addView(title); panel.addView(amount); panel.addView(note)
+        AlertDialog.Builder(this).setTitle("Edit shop expense").setView(panel)
+            .setNegativeButton("Cancel", null).setPositiveButton("Save") { _, _ ->
+                val value = amount.text.toString().toDoubleOrNull()
+                if (title.text.isNullOrBlank() || value == null || value <= 0) toast("Enter a valid expense")
+                else lifecycleScope.launch { withContext(Dispatchers.IO) { dao.updateExpense(expense.copy(title = title.text.toString().trim(), amount = value, note = note.text.toString())) }; analyticsScreen(period) }
+            }.show()
+    }
+
+    private fun editBill(inv: Invoice) {
+        lifecycleScope.launch {
+            val items = withContext(Dispatchers.IO) { dao.invoiceItems(inv.id) }
+            cart.clear()
+            items.forEach { item ->
+                val product = withContext(Dispatchers.IO) { dao.findByBarcode(item.barcode) }
+                    ?: Product(id = item.productId, barcode = item.barcode, name = item.productName, size = item.size,
+                        purchasePrice = item.purchasePrice, sellingPrice = item.sellingPrice, stock = 0)
+                cart.add(CartLine(product, item.quantity, item.sellingPrice))
+            }
+            editingInvoice = inv
+            customerName = inv.customerName; customerPhone = inv.customerPhone
+            discount = inv.discount; gstEnabled = inv.gstPercent > 0; gstPercent = if (inv.gstPercent > 0) inv.gstPercent else 5.0
+            paymentMode = inv.paymentMode
+            renderBill()
+        }
+    }
+
+    private fun saveBillEdit() {
+        val old = editingInvoice ?: return
+        val stamp = old.createdAt
+        lifecycleScope.launch {
+            val pdf = withContext(Dispatchers.IO) { generatePdf(old.invoiceNo, stamp) }
+            val updated = old.copy(customerName = customerName, customerPhone = customerPhone, subtotal = subtotal(),
+                discount = discount, gstPercent = if (gstEnabled) gstPercent else 0.0, total = total(), paymentMode = paymentMode, pdfPath = pdf.absolutePath)
+            val items = cart.map { line -> InvoiceItem(invoiceId = old.id, createdAt = stamp, productId = line.product.id,
+                barcode = line.product.barcode, productName = line.product.name, size = line.product.size,
+                quantity = line.qty, sellingPrice = line.price, purchasePrice = line.product.purchasePrice) }
+            try {
+                withContext(Dispatchers.IO) { dao.replaceInvoiceAndAdjustStock(updated, items) }
+                editingInvoice = null; cart.clear()
+                toast("Bill updated and PDF regenerated")
+                historyScreen()
+            } catch (e: Exception) { toast(e.message ?: "Could not update bill") }
+        }
+    }
+
     private fun createBill() {
         val stamp = System.currentTimeMillis()
         val invoiceNo = "GF-" + SimpleDateFormat("yyMMdd-HHmmss", Locale.US).format(Date(stamp))
