@@ -590,7 +590,17 @@ class MainActivity : AppCompatActivity() {
                 metric("ITEMS SOLD", items.sumOf { it.quantity }.toString())
                 if (expenses.isNotEmpty()) {
                     panel.addView(label("EXPENSE DETAILS", 13f))
-                    expenses.forEach { panel.addView(label("${it.title} • ${money(it.amount)} • ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(it.createdAt))}", 13f)) }
+                    expenses.forEach { expense ->
+                        val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(10, 8, 10, 8); background = rounded(Color.WHITE, 10f) }
+                        row.addView(label("${expense.title} • ${money(expense.amount)} • ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(expense.createdAt))}", 13f))
+                        val actions = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+                        actions.addView(TextView(this@MainActivity).apply { text = "Edit"; setTextColor(GREEN); setPadding(4, 8, 22, 4); setOnClickListener { editExpenseDialog(expense, selected) } })
+                        actions.addView(TextView(this@MainActivity).apply { text = "Delete"; setTextColor(Color.RED); setPadding(8, 8, 8, 4); setOnClickListener {
+                            AlertDialog.Builder(this@MainActivity).setTitle("Delete expense?").setMessage("Delete ${expense.title} (${money(expense.amount)})?")
+                                .setNegativeButton("Cancel", null).setPositiveButton("Delete") { _, _ -> lifecycleScope.launch { withContext(Dispatchers.IO) { dao.deleteExpense(expense.id) }; load(selected) } }.show()
+                        } })
+                        row.addView(actions); panel.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 6 })
+                    }
                 }
             }
         }
