@@ -683,6 +683,7 @@ class MainActivity : AppCompatActivity() {
     private fun createBill() {
         val stamp = System.currentTimeMillis()
         val invoiceNo = "GF-" + SimpleDateFormat("yyMMdd-HHmmss", Locale.US).format(Date(stamp))
+        val savedTotal = total()
         lifecycleScope.launch {
             val pdf = withContext(Dispatchers.IO) { generatePdf(invoiceNo, stamp) }
             val invoice = Invoice(createdAt = stamp, invoiceNo = invoiceNo, customerName = customerName, customerPhone = customerPhone,
@@ -697,8 +698,9 @@ class MainActivity : AppCompatActivity() {
                 })
                 cart.forEach { dao.reduceStock(it.product.id, it.qty) }
             }
+            cart.clear()
             AlertDialog.Builder(this@MainActivity).setTitle("Bill saved")
-                .setMessage("Invoice $invoiceNo\nTotal ${money(total())}\nPDF created.")
+                .setMessage("Invoice $invoiceNo\nTotal ${money(savedTotal)}\nPDF created.")
                 .setPositiveButton("Share PDF") { _, _ -> sharePdf(pdf, invoiceNo) }
                 .setNeutralButton("New bill") { _, _ -> newBill() }.setNegativeButton("Home") { _, _ -> showHome() }
                 .setCancelable(false).show()
