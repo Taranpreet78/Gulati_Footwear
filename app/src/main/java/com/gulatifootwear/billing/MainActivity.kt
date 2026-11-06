@@ -408,7 +408,16 @@ class MainActivity : AppCompatActivity() {
                     val c = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(13, 11, 13, 11); background = rounded(Color.WHITE) }
                     c.addView(label("${p.name} ${p.size}", 16f))
                     c.addView(label("${p.barcode} • ${money(p.sellingPrice)} • Cost ${money(p.purchasePrice)} • Stock ${p.stock}", 12f))
-                    c.addView(TextView(this@MainActivity).apply { text = "Edit product"; setTextColor(GREEN); setPadding(0, 8, 0, 4); setOnClickListener { editProductDialog(p) } })
+                    val actions = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+                    actions.addView(TextView(this@MainActivity).apply { text = "Edit product"; setTextColor(GREEN); setPadding(0, 8, 18, 4); setOnClickListener { editProductDialog(p) } })
+                    actions.addView(TextView(this@MainActivity).apply { text = "Delete product"; setTextColor(Color.RED); setPadding(12, 8, 8, 4); setOnClickListener {
+                        AlertDialog.Builder(this@MainActivity).setTitle("Delete product?")
+                            .setMessage("${p.name} (${p.barcode}) will be removed. Historical bills will remain.")
+                            .setNegativeButton("Cancel", null).setPositiveButton("Delete") { _, _ ->
+                                lifecycleScope.launch { withContext(Dispatchers.IO) { dao.deleteProduct(p.id) }; toast("Product deleted"); load(search.text.toString()) }
+                            }.show()
+                    } })
+                    c.addView(actions)
                     list.addView(c, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 8 })
                 }
             }
