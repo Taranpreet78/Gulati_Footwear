@@ -773,6 +773,16 @@ class MainActivity : AppCompatActivity() {
                     setOnClickListener { val f = File(inv.pdfPath); if (f.exists()) sharePdf(f, inv.invoiceNo) else toast("PDF file is unavailable") }
                 }
                 c.addView(share)
+                val actions = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+                actions.addView(TextView(this@MainActivity).apply { text = "Edit bill"; setTextColor(GREEN); setPadding(0, 8, 22, 5); setOnClickListener { editBill(inv) } })
+                actions.addView(TextView(this@MainActivity).apply { text = "Delete bill"; setTextColor(Color.RED); setPadding(8, 8, 8, 5); setOnClickListener {
+                    AlertDialog.Builder(this@MainActivity).setTitle("Delete bill?")
+                        .setMessage("Delete ${inv.invoiceNo}? Sold quantities will be returned to inventory.")
+                        .setNegativeButton("Cancel", null).setPositiveButton("Delete") { _, _ ->
+                            lifecycleScope.launch { withContext(Dispatchers.IO) { dao.removeInvoiceAndRestoreStock(inv.id) }; toast("Bill deleted and stock restored"); historyScreen() }
+                        }.show()
+                } })
+                c.addView(actions)
             }
         }
     }
