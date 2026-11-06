@@ -2,6 +2,7 @@ package com.gulatifootwear.billing
 
 import android.Manifest
 import android.app.Activity
+import android.app.DatePickerDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.*
@@ -36,6 +37,9 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.max
 
 private const val SHOP_NAME = "Gulati Footwear"
@@ -60,6 +64,8 @@ class MainActivity : AppCompatActivity() {
     private var paymentMode = "Cash"
     private var customerName = ""
     private var customerPhone = ""
+    private var editingInvoice: Invoice? = null
+    private var currentScreen = "Dashboard"
     private val money: (Double) -> String = { "₹" + String.format(Locale("en", "IN"), "%,.2f", it) }
 
     private val scanner = registerForActivityResult(ScanContractCompat()) { barcode ->
@@ -82,6 +88,7 @@ class MainActivity : AppCompatActivity() {
         GradientDrawable().apply { setColor(color); cornerRadius = radius; setStroke(1, Color.rgb(229, 235, 226)) }
 
     private fun baseScreen(title: String) {
+        currentScreen = title
         val drawer = DrawerLayout(this)
         drawerLayout = drawer
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(BG) }
@@ -95,6 +102,13 @@ class MainActivity : AppCompatActivity() {
             contentDescription = "Gulati Footwear logo"
         }
         header.addView(logo, LinearLayout.LayoutParams(42, 42).apply { rightMargin = 12 })
+        if (title != "Gulati Footwear") {
+            header.addView(TextView(this).apply {
+                text = "‹"; textSize = 32f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                setPadding(4, 0, 14, 0); setOnClickListener { onBackPressedDispatcher.onBackPressed() }
+                contentDescription = "Back"
+            }, LinearLayout.LayoutParams(-2, -2))
+        }
         val titleView = TextView(this).apply {
             text = title; textSize = 20f; setTextColor(Color.WHITE); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         }
@@ -203,6 +217,7 @@ class MainActivity : AppCompatActivity() {
         button("▤  Bill history", { historyScreen() }, false)
         button("▥  Profit & loss dashboard", { analyticsScreen("Today") }, false)
         button("＋  Add shop expense", { addExpenseDialog() }, false)
+        button("✉  Date-range database backup", { backupScreen() }, false)
         val info = card()
         info.addView(label("SHOP DETAILS", 12f))
         info.addView(label("$SHOP_ADDRESS\nPhone: $SHOP_PHONE\nUPI: $SHOP_UPI", 13f))
@@ -216,9 +231,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun newBill() {
+        if (cart.isNotEmpty() && editingInvoice == null) {
+            AlertDialog.Builder(this).setTitle("Continue current bill?")
+                .setMessage("A bill draft is already in progress. Resume it or start a new bill?")
+                .setPositiveButton("Resume draft") { _, _ -> renderBill() }
+                .setNegativeButton("New bill") { _, _ -> clearBillDraft(); renderBill() }.show()
+            return
+        }
+        clearBillDraft(); renderBill()
+    }
+    private fun clearBillDraft() {
+        editingInvoice = null
         cart.clear(); gstEnabled = false; gstPercent = 5.0; discount = 0.0
         customerName = ""; customerPhone = ""; paymentMode = "Cash"
-        renderBill()
     }
 
     private fun renderBill() {
@@ -256,6 +281,8 @@ class MainActivity : AppCompatActivity() {
         val nameField = field("Customer name (optional)", customerName)
         val phoneField = field("Customer phone (optional)", customerPhone, InputType.TYPE_CLASS_PHONE)
         customer.addView(nameField); customer.addView(phoneField)
+        nameField.addTextChangedListener(object : TextWatcher { override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}; override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { customerName = s?.toString().orEmpty() }; override fun afterTextChanged(s: Editable?) {} })
+        phoneField.addTextChangedListener(object : TextWatcher { override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}; override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { customerPhone = s?.toString().orEmpty() }; override fun afterTextChanged(s: Editable?) {} })
         body.addView(label("BILL ITEMS", 12f))
         if (cart.isEmpty()) body.addView(label("Your cart is empty. Search or scan a product to begin."))
         cart.forEachIndexed { index, line ->
@@ -296,12 +323,12 @@ class MainActivity : AppCompatActivity() {
             gstEnabled = gstCheck.isChecked; gstPercent = gstField.text.toString().toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 5.0
             paymentMode = payment.selectedItem?.toString() ?: "Cash"; renderBill()
         }, false)
-        button("✓  Generate PDF & save bill", {
+        button(if (editingInvoice == null) "✓  Generate PDF & save bill" else "✓  Save bill changes", {
             customerName = nameField.text.toString().trim(); customerPhone = phoneField.text.toString().trim()
             discount = discountField.text.toString().toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
             gstEnabled = gstCheck.isChecked; gstPercent = gstField.text.toString().toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 5.0
             paymentMode = payment.selectedItem?.toString() ?: "Cash"
-            if (cart.isEmpty()) toast("Add at least one item") else createBill()
+            if (cart.isEmpty()) toast("Add at least one item") else if (editingInvoice == null) createBill() else saveBillEdit()
         })
     }
 
