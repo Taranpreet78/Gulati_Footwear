@@ -741,8 +741,9 @@ class MainActivity : AppCompatActivity() {
             wrapText(itemName, normal, 79f).ifEmpty { listOf(itemName) }
         }
         val rowHeight = 10f
-        val estimatedHeight = 280f +
-            itemRows.sumOf { max(1, it.size) } * 12f + cart.size * 2f
+        // Compact dynamic receipt height; avoids a large blank tail after the thank-you text.
+        val estimatedHeight = 220f +
+            itemRows.sumOf { max(1, it.size) - 1 } * 10f + cart.size * 2f
         val doc = PdfDocument()
         val page = doc.startPage(PdfDocument.PageInfo.Builder(width, max(330, estimatedHeight.toInt()), 1).create())
         val canvas = page.canvas
@@ -798,12 +799,16 @@ class MainActivity : AppCompatActivity() {
 
         cart.forEachIndexed { index, line ->
             val name = line.product.name + if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
-            val parts = wrapText(name, normal, itemMaxWidth)
-            val numberBaseline = y + 8f
-            parts.forEach { part -> leftText(part, normal); y += rowHeight }
-            rightText(line.qty.toString(), qtyRight, normal, numberBaseline)
-            rightText(money(line.price), rateRight, small, numberBaseline)
-            rightText(money(line.qty * line.price), totalRight, small, numberBaseline)
+            val parts = wrapText(name, normal, itemMaxWidth).ifEmpty { listOf(name) }
+            // Keep numeric values on the first item-name line, even when the name wraps.
+            val firstLineBaseline = y + 8f
+            rightText(line.qty.toString(), qtyRight, normal, firstLineBaseline)
+            rightText(money(line.price), rateRight, small, firstLineBaseline)
+            rightText(money(line.qty * line.price), totalRight, small, firstLineBaseline)
+            parts.forEach { part ->
+                leftText(part, normal, y + 8f)
+                y += rowHeight
+            }
             if (index < cart.lastIndex) y += 2f
         }
         y += 2f
