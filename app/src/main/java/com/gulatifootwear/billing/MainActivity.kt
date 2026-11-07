@@ -728,12 +728,15 @@ class MainActivity : AppCompatActivity() {
         val left = 8f
         val right = width - 8f
         val contentWidth = right - left
-        val normal = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        // Android's "sans-serif" family is Roboto; use it consistently in the PDF.
+        val normal = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
             color = Color.BLACK
             textSize = 7.2f
             typeface = Typeface.create("sans-serif", Typeface.NORMAL)
         }
-        val bold = Paint(normal).apply { typeface = Typeface.create("sans-serif", Typeface.BOLD) }
+        val bold = Paint(normal).apply {
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
+        }
         val small = Paint(normal).apply { textSize = 6.8f }
         val titlePaint = Paint(bold).apply { textSize = 11.5f }
         val itemRows = cart.map { line ->
@@ -759,14 +762,16 @@ class MainActivity : AppCompatActivity() {
             canvas.drawText(text, x - paint.measureText(text), baseline, paint)
         }
         fun dottedRule() {
+            // Keep the dotted separator visually distinct from the text above and below.
             val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.BLACK
                 style = Paint.Style.STROKE
                 strokeWidth = 0.65f
                 pathEffect = DashPathEffect(floatArrayOf(1.2f, 2.0f), 0f)
             }
+            y += 3f
             canvas.drawLine(left, y, right, y, p)
-            y += 7f
+            y += 12f
         }
 
         // Shop name and details centered.
