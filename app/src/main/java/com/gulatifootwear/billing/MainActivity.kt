@@ -744,8 +744,9 @@ class MainActivity : AppCompatActivity() {
             wrapText(itemName, normal, 79f).ifEmpty { listOf(itemName) }
         }
         val rowHeight = 10f
-        // Compact dynamic receipt height; avoids a large blank tail after the thank-you text.
-        val estimatedHeight = 220f +
+        // Reserve enough vertical space for payment and both centered thank-you lines.
+        // The previous 220pt base clipped the footer on otherwise normal receipts.
+        val estimatedHeight = 290f +
             itemRows.sumOf { max(1, it.size) - 1 } * 10f + cart.size * 2f
         val doc = PdfDocument()
         val page = doc.startPage(PdfDocument.PageInfo.Builder(width, max(220, estimatedHeight.toInt()), 1).create())
