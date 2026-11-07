@@ -745,7 +745,7 @@ class MainActivity : AppCompatActivity() {
         val estimatedHeight = 220f +
             itemRows.sumOf { max(1, it.size) - 1 } * 10f + cart.size * 2f
         val doc = PdfDocument()
-        val page = doc.startPage(PdfDocument.PageInfo.Builder(width, max(330, estimatedHeight.toInt()), 1).create())
+        val page = doc.startPage(PdfDocument.PageInfo.Builder(width, max(220, estimatedHeight.toInt()), 1).create())
         val canvas = page.canvas
         var y = 18f
 
