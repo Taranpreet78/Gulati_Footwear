@@ -741,8 +741,8 @@ class MainActivity : AppCompatActivity() {
             wrapText(itemName, normal, 79f).ifEmpty { listOf(itemName) }
         }
         val rowHeight = 10f
-        val estimatedHeight = 24f + 3 * 10f + 12f + 2 * 10f + 12f +
-            itemRows.sumOf { max(1, it.size) } * rowHeight + 100f
+        val estimatedHeight = 280f +
+            itemRows.sumOf { max(1, it.size) } * 12f + cart.size * 2f
         val doc = PdfDocument()
         val page = doc.startPage(PdfDocument.PageInfo.Builder(width, max(330, estimatedHeight.toInt()), 1).create())
         val canvas = page.canvas
