@@ -723,35 +723,120 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun generatePdf(invoiceNo: String, stamp: Long): File {
-        val lines = mutableListOf(SHOP_NAME, SHOP_ADDRESS, "Phone: $SHOP_PHONE", "UPI: $SHOP_UPI", "--------------------------------",
-            "Invoice: $invoiceNo", "Date: " + SimpleDateFormat("dd-MM-yyyy HH:mm", Locale("en", "IN")).format(Date(stamp)))
-        if (customerName.isNotBlank()) lines += "Customer: $customerName"
-        if (customerPhone.isNotBlank()) lines += "Phone: $customerPhone"
-        lines += "--------------------------------"
-        cart.forEach { line ->
-            lines += line.product.name + if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
-            lines += "${line.qty} x ${money(line.price)} = ${money(line.qty * line.price)}"
-        }
-        lines += listOf("--------------------------------", "Subtotal: ${money(subtotal())}", "Discount: ${money(discount)}")
-        if (gstEnabled) lines += "GST (${gstPercent}%): ${money(taxable() * gstPercent / 100.0)}"
-        lines += listOf("TOTAL: ${money(total())}", "Payment: $paymentMode", "--------------------------------", "Thank you for shopping!", "Please visit again.")
+        // 80 mm thermal receipt width (PDF points).
         val width = (80.0 / 25.4 * 72.0).toInt()
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 8.5f; typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL) }
-        val wrapped = lines.flatMap { wrapText(it, paint, width - 18f) }
-        val doc = PdfDocument()
-        val page = doc.startPage(PdfDocument.PageInfo.Builder(width, max(300, wrapped.size * 15 + 42), 1).create())
-        var y = 22f
-        wrapped.forEachIndexed { i, line ->
-            paint.typeface = Typeface.create(Typeface.MONOSPACE, if (i == 0) Typeface.BOLD else Typeface.NORMAL)
-            page.canvas.drawText(line, 9f, y, paint); y += 15f
+        val left = 8f
+        val right = width - 8f
+        val contentWidth = right - left
+        val normal = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = 7.2f
+            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
         }
+        val bold = Paint(normal).apply { typeface = Typeface.create("sans-serif", Typeface.BOLD) }
+        val small = Paint(normal).apply { textSize = 6.8f }
+        val titlePaint = Paint(bold).apply { textSize = 11.5f }
+        val itemRows = cart.map { line ->
+            val itemName = line.product.name + if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
+            wrapText(itemName, normal, 79f).ifEmpty { listOf(itemName) }
+        }
+        val rowHeight = 10f
+        val estimatedHeight = 24f + 3 * 10f + 12f + 2 * 10f + 12f +
+            itemRows.sumOf { max(1, it.size) } * rowHeight + 100f
+        val doc = PdfDocument()
+        val page = doc.startPage(PdfDocument.PageInfo.Builder(width, max(330, estimatedHeight.toInt()), 1).create())
+        val canvas = page.canvas
+        var y = 18f
+
+        fun centered(text: String, paint: Paint, baseline: Float = y) {
+            canvas.drawText(text, (width - paint.measureText(text)) / 2f, baseline, paint)
+        }
+        fun leftText(text: String, paint: Paint = normal, baseline: Float = y) {
+            canvas.drawText(text, left, baseline, paint)
+        }
+        fun rightText(text: String, x: Float, paint: Paint = normal, baseline: Float = y) {
+            canvas.drawText(text, x - paint.measureText(text), baseline, paint)
+        }
+        fun dottedRule() {
+            val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.BLACK
+                style = Paint.Style.STROKE
+                strokeWidth = 0.65f
+                pathEffect = DashPathEffect(floatArrayOf(1.2f, 2.0f), 0f)
+            }
+            canvas.drawLine(left, y, right, y, p)
+            y += 7f
+        }
+
+        // Shop name and details centered.
+        centered(SHOP_NAME.uppercase(Locale.getDefault()), titlePaint)
+        y += 12f
+        wrapText(SHOP_ADDRESS, small, contentWidth).forEach { centered(it, small); y += 9f }
+        centered("Phone: $SHOP_PHONE", small); y += 9f
+        centered("UPI: $SHOP_UPI", small); y += 10f
+        dottedRule()
+
+        // Invoice and customer information aligned to the left.
+        leftText("Invoice: $invoiceNo", normal); y += 10f
+        leftText("Date: " + SimpleDateFormat("dd-MM-yyyy HH:mm", Locale("en", "IN")).format(Date(stamp)), normal); y += 10f
+        if (customerName.isNotBlank()) { leftText("Customer: $customerName", normal); y += 10f }
+        if (customerPhone.isNotBlank()) { leftText("Phone: $customerPhone", normal); y += 10f }
+        dottedRule()
+
+        // Four columns: item, quantity, rate and line total.
+        val qtyRight = 116f
+        val rateRight = 165f
+        val totalRight = right
+        val itemMaxWidth = qtyRight - left - 23f
+        val headerPaint = Paint(bold).apply { textSize = 6.8f }
+        leftText("Item", headerPaint)
+        rightText("Qty", qtyRight, headerPaint)
+        rightText("Rate", rateRight, headerPaint)
+        rightText("Total", totalRight, headerPaint)
+        y += 10f
+        dottedRule()
+
+        cart.forEachIndexed { index, line ->
+            val name = line.product.name + if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
+            val parts = wrapText(name, normal, itemMaxWidth)
+            parts.forEach { part -> leftText(part, normal); y += rowHeight }
+            rightText(line.qty.toString(), qtyRight, normal, y - 1f)
+            rightText(money(line.price), rateRight, small, y - 1f)
+            rightText(money(line.qty * line.price), totalRight, small, y - 1f)
+            if (index < cart.lastIndex) y += 2f
+        }
+        y += 2f
+        dottedRule()
+
+        // Existing summary and payment details.
+        leftText("Subtotal:", normal); rightText(money(subtotal()), right, normal); y += 11f
+        leftText("Discount:", normal); rightText(money(discount), right, normal); y += 11f
+        if (gstEnabled) {
+            leftText("GST (${gstPercent}%):", normal)
+            rightText(money(taxable() * gstPercent / 100.0), right, normal)
+            y += 11f
+        }
+        dottedRule()
+        val totalPaint = Paint(bold).apply { textSize = 9.2f }
+        leftText("TOTAL AMOUNT:", totalPaint)
+        rightText(money(total()), right, totalPaint)
+        y += 15f
+        leftText("Payment: $paymentMode", normal)
+        y += 11f
+        dottedRule()
+
+        // Thank-you message centered at the bottom.
+        centered("Thank you for shopping!", bold)
+        y += 11f
+        centered("Please visit again.", normal)
+
         doc.finishPage(page)
         val dir = File(cacheDir, "invoices").apply { mkdirs() }
         val file = File(dir, "$invoiceNo.pdf")
-        FileOutputStream(file).use { doc.writeTo(it) }; doc.close()
+        FileOutputStream(file).use { doc.writeTo(it) }
+        doc.close()
         return file
     }
-
     private fun wrapText(s: String, paint: Paint, maxWidth: Float): List<String> {
         if (paint.measureText(s) <= maxWidth) return listOf(s)
         val out = mutableListOf<String>(); var current = ""
