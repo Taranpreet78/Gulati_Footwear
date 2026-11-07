@@ -799,10 +799,11 @@ class MainActivity : AppCompatActivity() {
         cart.forEachIndexed { index, line ->
             val name = line.product.name + if (line.product.size.isNotBlank()) " (Size ${line.product.size})" else ""
             val parts = wrapText(name, normal, itemMaxWidth)
+            val numberBaseline = y + 8f
             parts.forEach { part -> leftText(part, normal); y += rowHeight }
-            rightText(line.qty.toString(), qtyRight, normal, y - 1f)
-            rightText(money(line.price), rateRight, small, y - 1f)
-            rightText(money(line.qty * line.price), totalRight, small, y - 1f)
+            rightText(line.qty.toString(), qtyRight, normal, numberBaseline)
+            rightText(money(line.price), rateRight, small, numberBaseline)
+            rightText(money(line.qty * line.price), totalRight, small, numberBaseline)
             if (index < cart.lastIndex) y += 2f
         }
         y += 2f
