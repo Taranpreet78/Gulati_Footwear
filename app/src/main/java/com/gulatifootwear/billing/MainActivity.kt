@@ -379,25 +379,54 @@ class MainActivity : AppCompatActivity() {
             }.setNegativeButton("Cancel", null).show()
     }
 
-    private fun addProductDialog(barcode: String, addToCart: Boolean) {
-        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 4, 20, 0) }
-        val name = field("Product name"); val brand = field("Brand (optional)"); val size = field("Size")
-        val buy = field("Purchase price ₹", "", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
-        val sell = field("Selling price ₹", "", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
-        val stock = field("Opening stock quantity", "1", InputType.TYPE_CLASS_NUMBER)
-        listOf(name, brand, size, buy, sell, stock).forEach { panel.addView(it) }
-        AlertDialog.Builder(this).setTitle("New product • $barcode").setView(panel)
-            .setPositiveButton("Save") { _, _ ->
-                val productName = name.text.toString().trim(); val selling = sell.text.toString().toDoubleOrNull()
-                if (productName.isBlank() || selling == null || selling < 0) toast("Product name and valid selling price are required")
-                else lifecycleScope.launch {
-                    val product = Product(barcode = barcode, name = productName, brand = brand.text.toString().trim(),
-                        size = size.text.toString().trim(), purchasePrice = buy.text.toString().toDoubleOrNull() ?: 0.0,
-                        sellingPrice = selling, stock = stock.text.toString().toIntOrNull()?.coerceAtLeast(0) ?: 0)
-                    val id = withContext(Dispatchers.IO) { dao.saveProduct(product) }
-                    if (addToCart) { cart.add(CartLine(product.copy(id = id))); renderBill() } else inventoryScreen()
-                }
-            }.setNegativeButton("Cancel", null).show()
+    private fun addProductDialog(scannedBarcode: String, addToCart: Boolean) {
+        // New products use the shop's own sequential barcode series (G140, G141, ...).
+        // Keep the highest existing G-number so older inventory and imported products remain intact.
+        lifecycleScope.launch {
+            val existingBarcodes = withContext(Dispatchers.IO) { dao.allBarcodes() }
+            val highestNumber = existingBarcodes.mapNotNull { code ->
+                Regex("^G(\\d+)$", RegexOption.IGNORE_CASE)
+                    .matchEntire(code.trim())?.groupValues?.get(1)?.toIntOrNull()
+            }.maxOrNull() ?: 139
+            val newBarcode = "G" + (maxOf(139, highestNumber) + 1)
+
+            val panel = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(20, 4, 20, 0)
+            }
+            panel.addView(label("Auto-generated barcode: $newBarcode", 14f))
+            val name = field("Product name")
+            val brand = field("Brand (optional)")
+            val size = field("Size")
+            val buy = field("Purchase price ₹", "", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
+            val sell = field("Selling price ₹", "", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
+            val stock = field("Opening stock quantity", "1", InputType.TYPE_CLASS_NUMBER)
+            listOf(name, brand, size, buy, sell, stock).forEach { panel.addView(it) }
+
+            AlertDialog.Builder(this@MainActivity).setTitle("New product • $newBarcode").setView(panel)
+                .setPositiveButton("Save") { _, _ ->
+                    val productName = name.text.toString().trim()
+                    val selling = sell.text.toString().toDoubleOrNull()
+                    if (productName.isBlank() || selling == null || selling < 0) {
+                        toast("Product name and valid selling price are required")
+                    } else lifecycleScope.launch {
+                        val product = Product(
+                            barcode = newBarcode,
+                            name = productName,
+                            brand = brand.text.toString().trim(),
+                            size = size.text.toString().trim(),
+                            purchasePrice = buy.text.toString().toDoubleOrNull() ?: 0.0,
+                            sellingPrice = selling,
+                            stock = stock.text.toString().toIntOrNull()?.coerceAtLeast(0) ?: 0
+                        )
+                        val id = withContext(Dispatchers.IO) { dao.saveProduct(product) }
+                        if (addToCart) {
+                            cart.add(CartLine(product.copy(id = id)))
+                            renderBill()
+                        } else inventoryScreen()
+                    }
+                }.setNegativeButton("Cancel", null).show()
+        }
     }
 
     private fun editPrice(index: Int) {
