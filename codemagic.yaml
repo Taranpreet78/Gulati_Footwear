@@ -6,6 +6,8 @@ workflows:
 
     environment:
       java: 17
+      android_signing:
+        - gulati_footwear_release
 
     scripts:
       - name: Set Android SDK location
@@ -20,7 +22,8 @@ workflows:
 
       - name: Build Gulati Footwear APK
         script: |
-          "$HOME/gradle-8.9/bin/gradle" assembleDebug
+          "$HOME/gradle-8.9/bin/gradle" assembleDebug assembleRelease
 
     artifacts:
       - app/build/outputs/apk/debug/*.apk
+      - app/build/outputs/apk/release/*.apk
