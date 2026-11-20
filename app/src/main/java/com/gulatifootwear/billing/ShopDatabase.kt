@@ -132,6 +132,42 @@ interface ShopDao {
 
     @Query("SELECT * FROM invoices WHERE createdAt BETWEEN :from AND :to ORDER BY createdAt DESC")
     suspend fun invoicesBetween(from: Long, to: Long): List<Invoice>
+
+    @Query("DELETE FROM invoice_items")
+    suspend fun deleteAllInvoiceItems()
+
+    @Query("DELETE FROM invoices")
+    suspend fun deleteAllInvoices()
+
+    @Query("DELETE FROM expenses")
+    suspend fun deleteAllExpenses()
+
+    @Query("DELETE FROM products")
+    suspend fun deleteAllProducts()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreProducts(items: List<Product>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreInvoices(items: List<Invoice>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreInvoiceItems(items: List<InvoiceItem>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreExpenses(items: List<ShopExpense>)
+
+    @Transaction
+    suspend fun replaceAllData(products: List<Product>, invoices: List<Invoice>, items: List<InvoiceItem>, expenses: List<ShopExpense>) {
+        deleteAllInvoiceItems()
+        deleteAllInvoices()
+        deleteAllExpenses()
+        deleteAllProducts()
+        if (products.isNotEmpty()) restoreProducts(products)
+        if (invoices.isNotEmpty()) restoreInvoices(invoices)
+        if (items.isNotEmpty()) restoreInvoiceItems(items)
+        if (expenses.isNotEmpty()) restoreExpenses(expenses)
+    }
 }
 
 @Database(entities = [Product::class, Invoice::class, InvoiceItem::class, ShopExpense::class], version = 3, exportSchema = false)
