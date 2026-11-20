@@ -3,7 +3,7 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <application
         android:allowBackup="true"
-        android:label="Gulati Footwear"
+        android:label="Gulati Footwear Restore Test"
         android:icon="@drawable/ic_gulati_logo"
         android:roundIcon="@drawable/ic_gulati_logo"
         android:theme="@style/AppTheme"
