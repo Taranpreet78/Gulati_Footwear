@@ -1055,13 +1055,25 @@ class MainActivity : AppCompatActivity() {
                         val lines = invoices.flatMap { dao.invoiceItems(it.id) }
                         val json = JSONObject().put("app", SHOP_NAME).put("backupCreatedAt", System.currentTimeMillis())
                             .put("from", fmt.format(from.time)).put("to", fmt.format(to.time))
-                        json.put("products", JSONArray().apply { products.forEach { put(JSONObject().put("id",it.id).put("barcode",it.barcode).put("name",it.name).put("brand",it.brand).put("size",it.size).put("purchasePrice",it.purchasePrice).put("sellingPrice",it.sellingPrice).put("stock",it.stock)) } })
-                        json.put("invoices", JSONArray().apply { invoices.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("invoiceNo",it.invoiceNo).put("customerName",it.customerName).put("customerPhone",it.customerPhone).put("subtotal",it.subtotal).put("discount",it.discount).put("gstPercent",it.gstPercent).put("total",it.total).put("paymentMode",it.paymentMode)) } })
+                        json.put("products", JSONArray().apply { products.forEach { put(JSONObject().put("id",it.id).put("barcode",it.barcode).put("name",it.name).put("brand",it.brand).put("size",it.size).put("purchasePrice",it.purchasePrice).put("sellingPrice",it.sellingPrice).put("stock",it.stock).put("hasImage", !it.imagePath.isNullOrBlank() && File(it.imagePath).exists())) } })
+                        json.put("invoices", JSONArray().apply { invoices.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("invoiceNo",it.invoiceNo).put("customerName",it.customerName).put("customerPhone",it.customerPhone).put("subtotal",it.subtotal).put("discount",it.discount).put("gstPercent",it.gstPercent).put("total",it.total).put("paymentMode",it.paymentMode).put("pdfPath",it.pdfPath)) } })
                         json.put("invoiceItems", JSONArray().apply { lines.forEach { put(JSONObject().put("id",it.id).put("invoiceId",it.invoiceId).put("productId",it.productId).put("barcode",it.barcode).put("productName",it.productName).put("size",it.size).put("quantity",it.quantity).put("sellingPrice",it.sellingPrice).put("purchasePrice",it.purchasePrice).put("createdAt",it.createdAt)) } })
                         json.put("expenses", JSONArray().apply { expenses.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("title",it.title).put("amount",it.amount).put("note",it.note)) } })
                         val dir = File(cacheDir, "backups").apply { mkdirs() }
                         val out = File(dir, "Gulati_Backup_${fmt.format(from.time)}_to_${fmt.format(to.time)}.zip")
-                        ZipOutputStream(FileOutputStream(out)).use { z -> z.putNextEntry(java.util.zip.ZipEntry("backup.json")); z.write(json.toString(2).toByteArray(Charsets.UTF_8)); z.closeEntry() }
+                        ZipOutputStream(FileOutputStream(out)).use { z ->
+                            z.putNextEntry(java.util.zip.ZipEntry("backup.json"))
+                            z.write(json.toString(2).toByteArray(Charsets.UTF_8))
+                            z.closeEntry()
+                            products.forEach { product ->
+                                val imageFile = product.imagePath?.let { File(it) }
+                                if (imageFile != null && imageFile.exists() && imageFile.isFile) {
+                                    z.putNextEntry(java.util.zip.ZipEntry("product_images/" + product.id + ".jpg"))
+                                    imageFile.inputStream().use { it.copyTo(z) }
+                                    z.closeEntry()
+                                }
+                            }
+                        }
                         out
                     }
                     val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", file)
