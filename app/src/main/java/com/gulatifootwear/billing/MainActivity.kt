@@ -242,6 +242,7 @@ class MainActivity : AppCompatActivity() {
             "▤   Bill history" to { historyScreen() },
             "▥   Profit & loss" to { analyticsScreen("Today") },
             "＋   Add shop expense" to { addExpenseDialog() },
+            "⇧   Database backup & restore" to { backupScreen() },
             "ⓘ   Shop details" to { shopDetails() }
         )
         navItems.forEach { item ->
@@ -311,7 +312,7 @@ class MainActivity : AppCompatActivity() {
         button("▤  Bill history", { historyScreen() }, false)
         button("▥  Profit & loss dashboard", { analyticsScreen("Today") }, false)
         button("＋  Add shop expense", { addExpenseDialog() }, false)
-        button("✉  Date-range database backup", { backupScreen() }, false)
+        button("✉  Database backup & restore", { backupScreen() }, false)
         val info = card()
         info.addView(label("SHOP DETAILS", 12f))
         info.addView(label("$SHOP_ADDRESS\nPhone: $SHOP_PHONE\nUPI: $SHOP_UPI", 13f))
