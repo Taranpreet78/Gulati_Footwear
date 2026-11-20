@@ -78,6 +78,79 @@ class MainActivity : AppCompatActivity() {
         if (uri != null) importExcel(uri)
     }
 
+    private var selectedProductImagePath: String? = null
+    private var productImageResult: ((String?) -> Unit)? = null
+    private val productImagePicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        lifecycleScope.launch {
+            val savedPath = withContext(Dispatchers.IO) {
+                try {
+                    val folder = File(filesDir, "product_images").apply { mkdirs() }
+                    val target = File(folder, "product_${System.currentTimeMillis()}.jpg")
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    if (target.exists() && target.length() > 0) target.absolutePath else null
+                } catch (_: Exception) { null }
+            }
+            if (savedPath == null) toast("Unable to save product photo")
+            productImageResult?.invoke(savedPath)
+            productImageResult = null
+        }
+    }
+
+    private fun chooseProductPhoto(onSelected: (String?) -> Unit) {
+        productImageResult = onSelected
+        productImagePicker.launch("image/*")
+    }
+
+    private fun productPhotoControls(
+        panel: LinearLayout,
+        initialPath: String?,
+        onPathChanged: (String?) -> Unit
+    ) {
+        val preview = ImageView(this).apply {
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            layoutParams = LinearLayout.LayoutParams(150, 150).apply { bottomMargin = 8 }
+        }
+        fun showPhoto(path: String?) {
+            if (!path.isNullOrBlank() && File(path).exists()) {
+                preview.setImageURI(Uri.fromFile(File(path)))
+                preview.visibility = View.VISIBLE
+            } else {
+                preview.setImageDrawable(null)
+                preview.visibility = View.GONE
+            }
+        }
+        showPhoto(initialPath)
+        panel.addView(preview)
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        actions.addView(Button(this).apply {
+            text = if (initialPath.isNullOrBlank()) "Add photo (optional)" else "Change photo"
+            setOnClickListener {
+                chooseProductPhoto { path ->
+                    if (path != null) {
+                        onPathChanged(path)
+                        showPhoto(path)
+                        text = "Change photo"
+                    }
+                }
+            }
+        })
+        actions.addView(Button(this).apply {
+            text = "Remove photo"
+            visibility = if (initialPath.isNullOrBlank()) View.GONE else View.VISIBLE
+            setOnClickListener {
+                onPathChanged(null)
+                showPhoto(null)
+                visibility = View.GONE
+            }
+        })
+        panel.addView(actions)
+    }
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         dao = ShopDatabase.get(this).dao()
@@ -395,6 +468,8 @@ class MainActivity : AppCompatActivity() {
                 setPadding(20, 4, 20, 0)
             }
             panel.addView(label("Auto-generated barcode: $newBarcode", 14f))
+            var photoPath: String? = null
+            productPhotoControls(panel, null) { photoPath = it }
             val name = field("Product name")
             val brand = field("Brand (optional)")
             val size = field("Size")
@@ -417,7 +492,8 @@ class MainActivity : AppCompatActivity() {
                             size = size.text.toString().trim(),
                             purchasePrice = buy.text.toString().toDoubleOrNull() ?: 0.0,
                             sellingPrice = selling,
-                            stock = stock.text.toString().toIntOrNull()?.coerceAtLeast(0) ?: 0
+                            stock = stock.text.toString().toIntOrNull()?.coerceAtLeast(0) ?: 0,
+                            imagePath = photoPath
                         )
                         val id = withContext(Dispatchers.IO) { dao.saveProduct(product) }
                         if (addToCart) {
@@ -480,12 +556,15 @@ class MainActivity : AppCompatActivity() {
         val buy = field("Purchase price ₹", p.purchasePrice.toString(), InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
         val sell = field("Selling price ₹", p.sellingPrice.toString(), InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
         val stock = field("Stock quantity", p.stock.toString(), InputType.TYPE_CLASS_NUMBER)
+        var photoPath: String? = p.imagePath
+        productPhotoControls(panel, p.imagePath) { photoPath = it }
         listOf(name, brand, size, buy, sell, stock).forEach { panel.addView(it) }
         AlertDialog.Builder(this).setTitle("Edit ${p.barcode}").setView(panel)
             .setPositiveButton("Save") { _, _ ->
                 val updated = p.copy(name = name.text.toString().trim(), brand = brand.text.toString().trim(), size = size.text.toString().trim(),
                     purchasePrice = buy.text.toString().toDoubleOrNull() ?: 0.0, sellingPrice = sell.text.toString().toDoubleOrNull() ?: p.sellingPrice,
-                    stock = stock.text.toString().toIntOrNull()?.coerceAtLeast(0) ?: p.stock)
+                    stock = stock.text.toString().toIntOrNull()?.coerceAtLeast(0) ?: p.stock,
+                    imagePath = photoPath)
                 lifecycleScope.launch { withContext(Dispatchers.IO) { dao.saveProduct(updated) }; inventoryScreen() }
             }.setNegativeButton("Cancel", null).show()
     }
