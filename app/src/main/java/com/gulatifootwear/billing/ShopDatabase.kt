@@ -83,6 +83,42 @@ interface ShopDao {
     @Query("DELETE FROM products WHERE id = :productId")
     suspend fun deleteProduct(productId: Long): Int
 
+    @Query("DELETE FROM invoice_items")
+    suspend fun clearAllInvoiceItems()
+
+    @Query("DELETE FROM invoices")
+    suspend fun clearAllInvoices()
+
+    @Query("DELETE FROM expenses")
+    suspend fun clearAllExpenses()
+
+    @Query("DELETE FROM products")
+    suspend fun clearAllProducts()
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun restoreProducts(items: List<Product>)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun restoreInvoices(items: List<Invoice>)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun restoreInvoiceItems(items: List<InvoiceItem>)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun restoreExpenses(items: List<ShopExpense>)
+
+    @Transaction
+    suspend fun replaceAllData(products: List<Product>, invoices: List<Invoice>, items: List<InvoiceItem>, expenses: List<ShopExpense>) {
+        clearAllInvoiceItems()
+        clearAllInvoices()
+        clearAllExpenses()
+        clearAllProducts()
+        if (products.isNotEmpty()) restoreProducts(products)
+        if (invoices.isNotEmpty()) restoreInvoices(invoices)
+        if (items.isNotEmpty()) restoreInvoiceItems(items)
+        if (expenses.isNotEmpty()) restoreExpenses(expenses)
+    }
+
     @Query("SELECT * FROM invoices ORDER BY createdAt DESC")
     suspend fun allInvoices(): List<Invoice>
 
