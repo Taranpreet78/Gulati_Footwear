@@ -1086,7 +1086,106 @@ class MainActivity : AppCompatActivity() {
                 } catch (e: Exception) { toast("Backup failed: ${e.message}") }
             }
         })
-        body.addView(label("This ZIP is a portable JSON data export, not a raw database image.", 12f))
+        button("↻  Restore backup from ZIP", { restoreZipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*")) }, false)
+        body.addView(label("Restore replaces current products, bills and expenses. Make a backup before restoring. New ZIP backups also contain product photos.", 12f))
+    }
+
+
+    private fun confirmAndRestoreBackup(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                val parsed = withContext(Dispatchers.IO) {
+                    val entries = HashMap<String, ByteArray>()
+                    var totalBytes = 0L
+                    ZipInputStream(contentResolver.openInputStream(uri) ?: error("Cannot open ZIP")).use { zip ->
+                        while (true) {
+                            val entry = zip.nextEntry ?: break
+                            if (!entry.isDirectory) {
+                                val name = entry.name
+                                if (name == "backup.json" || (name.startsWith("product_images/") && name.endsWith(".jpg"))) {
+                                    val bytes = zip.readBytes()
+                                    totalBytes += bytes.size
+                                    require(totalBytes <= 150L * 1024L * 1024L) { "Backup exceeds 150 MB" }
+                                    entries[name] = bytes
+                                }
+                            }
+                            zip.closeEntry()
+                        }
+                    }
+                    val json = JSONObject(String(entries["backup.json"] ?: error("backup.json is missing"), Charsets.UTF_8))
+                    require(json.optString("app") == SHOP_NAME) { "Not a Gulati Footwear backup" }
+                    val counts = intArrayOf(json.getJSONArray("products").length(), json.getJSONArray("invoices").length(),
+                        json.optJSONArray("invoiceItems")?.length() ?: 0, json.optJSONArray("expenses")?.length() ?: 0)
+                    Triple(json, entries, counts)
+                }
+                val json = parsed.first
+                val counts = parsed.third
+                AlertDialog.Builder(this@MainActivity).setTitle("Replace current data?")
+                    .setMessage("Products: " + counts[0] + "\nBills: " + counts[1] + "\nBill items: " + counts[2] + "\nExpenses: " + counts[3] +
+                        "\n\nRestoring replaces the current data. Please make a backup of current data first.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Restore") { _, _ ->
+                        lifecycleScope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    val products = ArrayList<Product>()
+                                    val productArray = json.getJSONArray("products")
+                                    val imageDir = File(filesDir, "product_images").apply { mkdirs() }
+                                    for (i in 0 until productArray.length()) {
+                                        val x = productArray.getJSONObject(i)
+                                        val id = x.getLong("id")
+                                        val image = parsed.second["product_images/" + id + ".jpg"]
+                                        val imagePath = if (image != null && image.isNotEmpty()) {
+                                            val target = File(imageDir, "restored_" + id + ".jpg")
+                                            FileOutputStream(target).use { it.write(image) }
+                                            target.absolutePath
+                                        } else null
+                                        products.add(Product(id = id, barcode = x.getString("barcode"), name = x.getString("name"),
+                                            size = x.optString("size", ""), brand = x.optString("brand", ""),
+                                            purchasePrice = x.optDouble("purchasePrice", 0.0), sellingPrice = x.optDouble("sellingPrice", 0.0),
+                                            stock = x.optInt("stock", 0), imagePath = imagePath))
+                                    }
+                                    val invoices = ArrayList<Invoice>()
+                                    val invoiceArray = json.getJSONArray("invoices")
+                                    for (i in 0 until invoiceArray.length()) {
+                                        val x = invoiceArray.getJSONObject(i)
+                                        invoices.add(Invoice(id = x.getLong("id"), createdAt = x.getLong("createdAt"),
+                                            invoiceNo = x.getString("invoiceNo"), customerName = x.optString("customerName", ""),
+                                            customerPhone = x.optString("customerPhone", ""), subtotal = x.optDouble("subtotal", 0.0),
+                                            discount = x.optDouble("discount", 0.0), gstPercent = x.optDouble("gstPercent", 0.0),
+                                            total = x.optDouble("total", 0.0), paymentMode = x.optString("paymentMode", "Cash"),
+                                            pdfPath = x.optString("pdfPath", "")))
+                                    }
+                                    val items = ArrayList<InvoiceItem>()
+                                    val itemArray = json.optJSONArray("invoiceItems") ?: JSONArray()
+                                    for (i in 0 until itemArray.length()) {
+                                        val x = itemArray.getJSONObject(i)
+                                        items.add(InvoiceItem(id = x.getLong("id"), invoiceId = x.getLong("invoiceId"),
+                                            createdAt = x.getLong("createdAt"), productId = x.getLong("productId"),
+                                            barcode = x.getString("barcode"), productName = x.getString("productName"),
+                                            size = x.optString("size", ""), quantity = x.optInt("quantity", 0),
+                                            sellingPrice = x.optDouble("sellingPrice", 0.0), purchasePrice = x.optDouble("purchasePrice", 0.0)))
+                                    }
+                                    val expenses = ArrayList<ShopExpense>()
+                                    val expenseArray = json.optJSONArray("expenses") ?: JSONArray()
+                                    for (i in 0 until expenseArray.length()) {
+                                        val x = expenseArray.getJSONObject(i)
+                                        expenses.add(ShopExpense(id = x.getLong("id"), createdAt = x.getLong("createdAt"),
+                                            title = x.getString("title"), amount = x.optDouble("amount", 0.0), note = x.optString("note", "")))
+                                    }
+                                    dao.replaceAllData(products, invoices, items, expenses)
+                                }
+                                toast("Backup restored successfully")
+                                showHome()
+                            } catch (e: Exception) {
+                                toast("Restore failed: " + (e.message ?: "Invalid backup"))
+                            }
+                        }
+                    }.show()
+            } catch (e: Exception) {
+                toast("Cannot read backup: " + (e.message ?: "Invalid ZIP"))
+            }
+        }
     }
 
     override fun onBackPressed() {
