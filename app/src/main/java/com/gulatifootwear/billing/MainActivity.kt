@@ -6,6 +6,7 @@ import android.app.DatePickerDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.*
+import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
@@ -78,37 +79,62 @@ class MainActivity : AppCompatActivity() {
         if (uri != null) importExcel(uri)
     }
 
-    private var selectedProductImagePath: String? = null
     private var productImageResult: ((String?) -> Unit)? = null
-    private val productImagePicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri == null) return@registerForActivityResult
-        lifecycleScope.launch {
-            val savedPath = withContext(Dispatchers.IO) {
-                try {
-                    val folder = File(filesDir, "product_images").apply { mkdirs() }
-                    val target = File(folder, "product_${System.currentTimeMillis()}.jpg")
-                    contentResolver.openInputStream(uri)?.use { input ->
-                        target.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    if (target.exists() && target.length() > 0) target.absolutePath else null
-                } catch (_: Exception) { null }
-            }
-            if (savedPath == null) toast("Unable to save product photo")
-            productImageResult?.invoke(savedPath)
+    private var pendingCameraPhoto: File? = null
+    private val productCameraLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        val captured = pendingCameraPhoto
+        pendingCameraPhoto = null
+        if (!success || captured == null || !captured.exists()) {
+            captured?.delete()
+            productImageResult?.invoke(null)
             productImageResult = null
+        } else {
+            lifecycleScope.launch {
+                val savedPath = withContext(Dispatchers.IO) {
+                    try {
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeFile(captured.absolutePath, bounds)
+                        var sample = 1
+                        while (bounds.outWidth / sample > 1600 || bounds.outHeight / sample > 1600) sample *= 2
+                        val bitmap = BitmapFactory.decodeFile(captured.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
+                            ?: throw IllegalStateException("Camera image could not be opened")
+                        val scale = minOf(1f, 1400f / maxOf(bitmap.width, bitmap.height))
+                        val resized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
+                        val folder = File(filesDir, "product_images").apply { mkdirs() }
+                        val target = File(folder, "product_\${System.currentTimeMillis()}.jpg")
+                        FileOutputStream(target).use { resized.compress(Bitmap.CompressFormat.JPEG, 78, it) }
+                        if (resized !== bitmap) bitmap.recycle()
+                        resized.recycle()
+                        captured.delete()
+                        if (target.exists() && target.length() > 0) target.absolutePath else null
+                    } catch (_: Exception) { captured.delete(); null }
+                }
+                if (savedPath == null) toast("Unable to save product photo")
+                productImageResult?.invoke(savedPath)
+                productImageResult = null
+            }
         }
+    }
+
+    private val restoreZipPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) confirmAndRestoreBackup(uri)
     }
 
     private fun chooseProductPhoto(onSelected: (String?) -> Unit) {
         productImageResult = onSelected
-        productImagePicker.launch("image/*")
+        try {
+            val folder = File(cacheDir, "camera_products").apply { mkdirs() }
+            val capture = File(folder, "capture_\${System.currentTimeMillis()}.jpg")
+            pendingCameraPhoto = capture
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", capture)
+            productCameraLauncher.launch(uri)
+        } catch (e: Exception) {
+            productImageResult = null
+            toast("Unable to open camera: \${e.message}")
+        }
     }
 
-    private fun productPhotoControls(
-        panel: LinearLayout,
-        initialPath: String?,
-        onPathChanged: (String?) -> Unit
-    ) {
+    private fun productPhotoControls(panel: LinearLayout, initialPath: String?, onPathChanged: (String?) -> Unit) {
         val preview = ImageView(this).apply {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.CENTER_CROP
@@ -127,13 +153,13 @@ class MainActivity : AppCompatActivity() {
         panel.addView(preview)
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actions.addView(Button(this).apply {
-            text = if (initialPath.isNullOrBlank()) "Add photo (optional)" else "Change photo"
+            text = if (initialPath.isNullOrBlank()) "Take photo (optional)" else "Take new photo"
             setOnClickListener {
                 chooseProductPhoto { path ->
                     if (path != null) {
                         onPathChanged(path)
                         showPhoto(path)
-                        text = "Change photo"
+                        text = "Take new photo"
                     }
                 }
             }
@@ -141,15 +167,10 @@ class MainActivity : AppCompatActivity() {
         actions.addView(Button(this).apply {
             text = "Remove photo"
             visibility = if (initialPath.isNullOrBlank()) View.GONE else View.VISIBLE
-            setOnClickListener {
-                onPathChanged(null)
-                showPhoto(null)
-                visibility = View.GONE
-            }
+            setOnClickListener { onPathChanged(null); showPhoto(null); visibility = View.GONE }
         })
         panel.addView(actions)
     }
-
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -322,7 +343,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderBill() {
         baseScreen("Create bill")
         button("▦  Scan barcode", { startScan() })
-        button("＋  Enter barcode / SKU", { manualBarcodeDialog() }, false)
+        button("＋  Add item", { addProductDialog("", true) }, false)
         body.addView(label("SEARCH PRODUCTS", 12f))
         val search = field("Search by product name, barcode, brand or size")
         body.addView(search, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 8 })
@@ -443,25 +464,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun manualBarcodeDialog() {
-        val input = field("Enter barcode / SKU")
-        AlertDialog.Builder(this).setTitle("Add item").setView(input)
-            .setPositiveButton("Continue") { _, _ ->
-                val code = input.text.toString().trim()
-                if (code.isBlank()) toast("Enter a barcode") else handleBarcode(code)
-            }.setNegativeButton("Cancel", null).show()
-    }
-
     private fun addProductDialog(scannedBarcode: String, addToCart: Boolean) {
-        // New products use the shop's own sequential barcode series (G140, G141, ...).
-        // Keep the highest existing G-number so older inventory and imported products remain intact.
+        // New products use the shop's own sequential barcode series starting at G100.
+        // Continue after the highest existing G-number and never reuse an existing barcode.
         lifecycleScope.launch {
             val existingBarcodes = withContext(Dispatchers.IO) { dao.allBarcodes() }
             val highestNumber = existingBarcodes.mapNotNull { code ->
                 Regex("^G(\\d+)$", RegexOption.IGNORE_CASE)
                     .matchEntire(code.trim())?.groupValues?.get(1)?.toIntOrNull()
-            }.maxOrNull() ?: 139
-            val newBarcode = "G" + (maxOf(139, highestNumber) + 1)
+            }.maxOrNull() ?: 99
+            val newBarcode = "G" + (maxOf(99, highestNumber) + 1)
 
             val panel = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1043,13 +1055,25 @@ class MainActivity : AppCompatActivity() {
                         val lines = invoices.flatMap { dao.invoiceItems(it.id) }
                         val json = JSONObject().put("app", SHOP_NAME).put("backupCreatedAt", System.currentTimeMillis())
                             .put("from", fmt.format(from.time)).put("to", fmt.format(to.time))
-                        json.put("products", JSONArray().apply { products.forEach { put(JSONObject().put("id",it.id).put("barcode",it.barcode).put("name",it.name).put("brand",it.brand).put("size",it.size).put("purchasePrice",it.purchasePrice).put("sellingPrice",it.sellingPrice).put("stock",it.stock)) } })
-                        json.put("invoices", JSONArray().apply { invoices.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("invoiceNo",it.invoiceNo).put("customerName",it.customerName).put("customerPhone",it.customerPhone).put("subtotal",it.subtotal).put("discount",it.discount).put("gstPercent",it.gstPercent).put("total",it.total).put("paymentMode",it.paymentMode)) } })
+                        json.put("products", JSONArray().apply { products.forEach { put(JSONObject().put("id",it.id).put("barcode",it.barcode).put("name",it.name).put("brand",it.brand).put("size",it.size).put("purchasePrice",it.purchasePrice).put("sellingPrice",it.sellingPrice).put("stock",it.stock).put("hasImage", !it.imagePath.isNullOrBlank() && File(it.imagePath).exists())) } })
+                        json.put("invoices", JSONArray().apply { invoices.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("invoiceNo",it.invoiceNo).put("customerName",it.customerName).put("customerPhone",it.customerPhone).put("subtotal",it.subtotal).put("discount",it.discount).put("gstPercent",it.gstPercent).put("total",it.total).put("paymentMode",it.paymentMode).put("pdfPath",it.pdfPath)) } })
                         json.put("invoiceItems", JSONArray().apply { lines.forEach { put(JSONObject().put("id",it.id).put("invoiceId",it.invoiceId).put("productId",it.productId).put("barcode",it.barcode).put("productName",it.productName).put("size",it.size).put("quantity",it.quantity).put("sellingPrice",it.sellingPrice).put("purchasePrice",it.purchasePrice).put("createdAt",it.createdAt)) } })
                         json.put("expenses", JSONArray().apply { expenses.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("title",it.title).put("amount",it.amount).put("note",it.note)) } })
                         val dir = File(cacheDir, "backups").apply { mkdirs() }
                         val out = File(dir, "Gulati_Backup_${fmt.format(from.time)}_to_${fmt.format(to.time)}.zip")
-                        ZipOutputStream(FileOutputStream(out)).use { z -> z.putNextEntry(java.util.zip.ZipEntry("backup.json")); z.write(json.toString(2).toByteArray(Charsets.UTF_8)); z.closeEntry() }
+                        ZipOutputStream(FileOutputStream(out)).use { z ->
+                            z.putNextEntry(java.util.zip.ZipEntry("backup.json"))
+                            z.write(json.toString(2).toByteArray(Charsets.UTF_8))
+                            z.closeEntry()
+                            products.forEach { product ->
+                                val imageFile = product.imagePath?.let { File(it) }
+                                if (imageFile != null && imageFile.exists() && imageFile.isFile) {
+                                    z.putNextEntry(java.util.zip.ZipEntry("product_images/" + product.id + ".jpg"))
+                                    imageFile.inputStream().use { it.copyTo(z) }
+                                    z.closeEntry()
+                                }
+                            }
+                        }
                         out
                     }
                     val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", file)
@@ -1062,7 +1086,106 @@ class MainActivity : AppCompatActivity() {
                 } catch (e: Exception) { toast("Backup failed: ${e.message}") }
             }
         })
-        body.addView(label("This ZIP is a portable JSON data export, not a raw database image.", 12f))
+        button("↻  Restore backup from ZIP", { restoreZipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*")) }, false)
+        body.addView(label("Restore replaces current products, bills and expenses. Make a backup before restoring. New ZIP backups also contain product photos.", 12f))
+    }
+
+
+    private fun confirmAndRestoreBackup(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                val parsed = withContext(Dispatchers.IO) {
+                    val entries = HashMap<String, ByteArray>()
+                    var totalBytes = 0L
+                    ZipInputStream(contentResolver.openInputStream(uri) ?: error("Cannot open ZIP")).use { zip ->
+                        while (true) {
+                            val entry = zip.nextEntry ?: break
+                            if (!entry.isDirectory) {
+                                val name = entry.name
+                                if (name == "backup.json" || (name.startsWith("product_images/") && name.endsWith(".jpg"))) {
+                                    val bytes = zip.readBytes()
+                                    totalBytes += bytes.size
+                                    require(totalBytes <= 150L * 1024L * 1024L) { "Backup exceeds 150 MB" }
+                                    entries[name] = bytes
+                                }
+                            }
+                            zip.closeEntry()
+                        }
+                    }
+                    val json = JSONObject(String(entries["backup.json"] ?: error("backup.json is missing"), Charsets.UTF_8))
+                    require(json.optString("app") == SHOP_NAME) { "Not a Gulati Footwear backup" }
+                    val counts = intArrayOf(json.getJSONArray("products").length(), json.getJSONArray("invoices").length(),
+                        json.optJSONArray("invoiceItems")?.length() ?: 0, json.optJSONArray("expenses")?.length() ?: 0)
+                    Triple(json, entries, counts)
+                }
+                val json = parsed.first
+                val counts = parsed.third
+                AlertDialog.Builder(this@MainActivity).setTitle("Replace current data?")
+                    .setMessage("Products: " + counts[0] + "\nBills: " + counts[1] + "\nBill items: " + counts[2] + "\nExpenses: " + counts[3] +
+                        "\n\nRestoring replaces the current data. Please make a backup of current data first.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Restore") { _, _ ->
+                        lifecycleScope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    val products = ArrayList<Product>()
+                                    val productArray = json.getJSONArray("products")
+                                    val imageDir = File(filesDir, "product_images").apply { mkdirs() }
+                                    for (i in 0 until productArray.length()) {
+                                        val x = productArray.getJSONObject(i)
+                                        val id = x.getLong("id")
+                                        val image = parsed.second["product_images/" + id + ".jpg"]
+                                        val imagePath = if (image != null && image.isNotEmpty()) {
+                                            val target = File(imageDir, "restored_" + id + ".jpg")
+                                            FileOutputStream(target).use { it.write(image) }
+                                            target.absolutePath
+                                        } else null
+                                        products.add(Product(id = id, barcode = x.getString("barcode"), name = x.getString("name"),
+                                            size = x.optString("size", ""), brand = x.optString("brand", ""),
+                                            purchasePrice = x.optDouble("purchasePrice", 0.0), sellingPrice = x.optDouble("sellingPrice", 0.0),
+                                            stock = x.optInt("stock", 0), imagePath = imagePath))
+                                    }
+                                    val invoices = ArrayList<Invoice>()
+                                    val invoiceArray = json.getJSONArray("invoices")
+                                    for (i in 0 until invoiceArray.length()) {
+                                        val x = invoiceArray.getJSONObject(i)
+                                        invoices.add(Invoice(id = x.getLong("id"), createdAt = x.getLong("createdAt"),
+                                            invoiceNo = x.getString("invoiceNo"), customerName = x.optString("customerName", ""),
+                                            customerPhone = x.optString("customerPhone", ""), subtotal = x.optDouble("subtotal", 0.0),
+                                            discount = x.optDouble("discount", 0.0), gstPercent = x.optDouble("gstPercent", 0.0),
+                                            total = x.optDouble("total", 0.0), paymentMode = x.optString("paymentMode", "Cash"),
+                                            pdfPath = x.optString("pdfPath", "")))
+                                    }
+                                    val items = ArrayList<InvoiceItem>()
+                                    val itemArray = json.optJSONArray("invoiceItems") ?: JSONArray()
+                                    for (i in 0 until itemArray.length()) {
+                                        val x = itemArray.getJSONObject(i)
+                                        items.add(InvoiceItem(id = x.getLong("id"), invoiceId = x.getLong("invoiceId"),
+                                            createdAt = x.getLong("createdAt"), productId = x.getLong("productId"),
+                                            barcode = x.getString("barcode"), productName = x.getString("productName"),
+                                            size = x.optString("size", ""), quantity = x.optInt("quantity", 0),
+                                            sellingPrice = x.optDouble("sellingPrice", 0.0), purchasePrice = x.optDouble("purchasePrice", 0.0)))
+                                    }
+                                    val expenses = ArrayList<ShopExpense>()
+                                    val expenseArray = json.optJSONArray("expenses") ?: JSONArray()
+                                    for (i in 0 until expenseArray.length()) {
+                                        val x = expenseArray.getJSONObject(i)
+                                        expenses.add(ShopExpense(id = x.getLong("id"), createdAt = x.getLong("createdAt"),
+                                            title = x.getString("title"), amount = x.optDouble("amount", 0.0), note = x.optString("note", "")))
+                                    }
+                                    dao.replaceAllData(products, invoices, items, expenses)
+                                }
+                                toast("Backup restored successfully")
+                                showHome()
+                            } catch (e: Exception) {
+                                toast("Restore failed: " + (e.message ?: "Invalid backup"))
+                            }
+                        }
+                    }.show()
+            } catch (e: Exception) {
+                toast("Cannot read backup: " + (e.message ?: "Invalid ZIP"))
+            }
+        }
     }
 
     override fun onBackPressed() {
