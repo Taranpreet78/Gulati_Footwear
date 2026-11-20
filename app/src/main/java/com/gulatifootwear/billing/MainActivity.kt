@@ -453,15 +453,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun addProductDialog(scannedBarcode: String, addToCart: Boolean) {
-        // New products use the shop's own sequential barcode series (G140, G141, ...).
-        // Keep the highest existing G-number so older inventory and imported products remain intact.
+        // New products use the shop's own sequential barcode series starting at G100.
+        // Continue after the highest existing G-number and never reuse an existing barcode.
         lifecycleScope.launch {
             val existingBarcodes = withContext(Dispatchers.IO) { dao.allBarcodes() }
             val highestNumber = existingBarcodes.mapNotNull { code ->
                 Regex("^G(\\d+)$", RegexOption.IGNORE_CASE)
                     .matchEntire(code.trim())?.groupValues?.get(1)?.toIntOrNull()
-            }.maxOrNull() ?: 139
-            val newBarcode = "G" + (maxOf(139, highestNumber) + 1)
+            }.maxOrNull() ?: 99
+            val newBarcode = "G" + (maxOf(99, highestNumber) + 1)
 
             val panel = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
