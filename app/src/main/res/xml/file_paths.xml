@@ -5,4 +5,5 @@
 
     <!-- Date-range ZIP backups created in cacheDir/backups/ -->
     <cache-path name="shared_backups" path="backups/" />
+    <cache-path name="product_camera" path="camera_products/" />
 </paths>
