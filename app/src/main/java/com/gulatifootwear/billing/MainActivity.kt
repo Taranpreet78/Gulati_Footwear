@@ -101,7 +101,7 @@ class MainActivity : AppCompatActivity() {
                         val scale = minOf(1f, 1400f / maxOf(bitmap.width, bitmap.height))
                         val resized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
                         val folder = File(filesDir, "product_images").apply { mkdirs() }
-                        val target = File(folder, "product_\${System.currentTimeMillis()}.jpg")
+                        val target = File(folder, "product_${System.currentTimeMillis()}.jpg")
                         FileOutputStream(target).use { resized.compress(Bitmap.CompressFormat.JPEG, 78, it) }
                         if (resized !== bitmap) bitmap.recycle()
                         resized.recycle()
@@ -124,13 +124,13 @@ class MainActivity : AppCompatActivity() {
         productImageResult = onSelected
         try {
             val folder = File(cacheDir, "camera_products").apply { mkdirs() }
-            val capture = File(folder, "capture_\${System.currentTimeMillis()}.jpg")
+            val capture = File(folder, "capture_${System.currentTimeMillis()}.jpg")
             pendingCameraPhoto = capture
             val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", capture)
             productCameraLauncher.launch(uri)
         } catch (e: Exception) {
             productImageResult = null
-            toast("Unable to open camera: \${e.message}")
+            toast("Unable to open camera: ${e.message}")
         }
     }
 
