@@ -77,6 +77,9 @@ class MainActivity : AppCompatActivity() {
     private val excelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) importExcel(uri)
     }
+    private val backupRestorePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) restoreBackup(uri)
+    }
 
     private var selectedProductImagePath: String? = null
     private var productImageResult: ((String?) -> Unit)? = null
@@ -291,6 +294,7 @@ class MainActivity : AppCompatActivity() {
         button("▥  Profit & loss dashboard", { analyticsScreen("Today") }, false)
         button("＋  Add shop expense", { addExpenseDialog() }, false)
         button("✉  Date-range database backup", { backupScreen() }, false)
+        button("↻  Restore backup (test app)", { backupRestorePicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }, false)
         val info = card()
         info.addView(label("SHOP DETAILS", 12f))
         info.addView(label("$SHOP_ADDRESS\nPhone: $SHOP_PHONE\nUPI: $SHOP_UPI", 13f))
@@ -1006,6 +1010,43 @@ class MainActivity : AppCompatActivity() {
                 } })
                 c.addView(actions)
             }
+        }
+    }
+
+    private fun restoreBackup(uri: Uri) {
+        lifecycleScope.launch {
+            val payload = try {
+                withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)?.use { BackupRestore.readZip(it) }
+                        ?: throw IllegalArgumentException("Unable to open the selected backup.")
+                }
+            } catch (e: Exception) {
+                toast("Backup check failed: ${e.message ?: "Invalid backup"}")
+                return@launch
+            }
+
+            val summary = "Backup dates: ${payload.fromDate} to ${payload.toDate}\\n\\n" +
+                "Products: ${payload.products.size}\\nBills: ${payload.invoices.size}\\n" +
+                "Bill items: ${payload.invoiceItems.size}\\nExpenses: ${payload.expenses.size}\\n\\n" +
+                "This test app's existing data will be replaced. The original app is a separate installation and will not be changed. " +
+                "Old PDF files and product photos are not part of this backup."
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("Restore Gulati Footwear backup?")
+                .setMessage(summary)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Restore in test app") { _, _ ->
+                    lifecycleScope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                dao.replaceAllData(payload.products, payload.invoices, payload.invoiceItems, payload.expenses)
+                            }
+                            toast("Restore completed. Please verify products and bill history.")
+                            showHome()
+                        } catch (e: Exception) {
+                            toast("Restore failed; transaction was rolled back: ${e.message}")
+                        }
+                    }
+                }.show()
         }
     }
 
