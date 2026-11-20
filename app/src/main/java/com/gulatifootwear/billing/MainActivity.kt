@@ -6,6 +6,7 @@ import android.app.DatePickerDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.*
+import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
@@ -78,37 +79,62 @@ class MainActivity : AppCompatActivity() {
         if (uri != null) importExcel(uri)
     }
 
-    private var selectedProductImagePath: String? = null
     private var productImageResult: ((String?) -> Unit)? = null
-    private val productImagePicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri == null) return@registerForActivityResult
-        lifecycleScope.launch {
-            val savedPath = withContext(Dispatchers.IO) {
-                try {
-                    val folder = File(filesDir, "product_images").apply { mkdirs() }
-                    val target = File(folder, "product_${System.currentTimeMillis()}.jpg")
-                    contentResolver.openInputStream(uri)?.use { input ->
-                        target.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    if (target.exists() && target.length() > 0) target.absolutePath else null
-                } catch (_: Exception) { null }
-            }
-            if (savedPath == null) toast("Unable to save product photo")
-            productImageResult?.invoke(savedPath)
+    private var pendingCameraPhoto: File? = null
+    private val productCameraLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        val captured = pendingCameraPhoto
+        pendingCameraPhoto = null
+        if (!success || captured == null || !captured.exists()) {
+            captured?.delete()
+            productImageResult?.invoke(null)
             productImageResult = null
+        } else {
+            lifecycleScope.launch {
+                val savedPath = withContext(Dispatchers.IO) {
+                    try {
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeFile(captured.absolutePath, bounds)
+                        var sample = 1
+                        while (bounds.outWidth / sample > 1600 || bounds.outHeight / sample > 1600) sample *= 2
+                        val bitmap = BitmapFactory.decodeFile(captured.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
+                            ?: throw IllegalStateException("Camera image could not be opened")
+                        val scale = minOf(1f, 1400f / maxOf(bitmap.width, bitmap.height))
+                        val resized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
+                        val folder = File(filesDir, "product_images").apply { mkdirs() }
+                        val target = File(folder, "product_\${System.currentTimeMillis()}.jpg")
+                        FileOutputStream(target).use { resized.compress(Bitmap.CompressFormat.JPEG, 78, it) }
+                        if (resized !== bitmap) bitmap.recycle()
+                        resized.recycle()
+                        captured.delete()
+                        if (target.exists() && target.length() > 0) target.absolutePath else null
+                    } catch (_: Exception) { captured.delete(); null }
+                }
+                if (savedPath == null) toast("Unable to save product photo")
+                productImageResult?.invoke(savedPath)
+                productImageResult = null
+            }
         }
+    }
+
+    private val restoreZipPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) confirmAndRestoreBackup(uri)
     }
 
     private fun chooseProductPhoto(onSelected: (String?) -> Unit) {
         productImageResult = onSelected
-        productImagePicker.launch("image/*")
+        try {
+            val folder = File(cacheDir, "camera_products").apply { mkdirs() }
+            val capture = File(folder, "capture_\${System.currentTimeMillis()}.jpg")
+            pendingCameraPhoto = capture
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", capture)
+            productCameraLauncher.launch(uri)
+        } catch (e: Exception) {
+            productImageResult = null
+            toast("Unable to open camera: \${e.message}")
+        }
     }
 
-    private fun productPhotoControls(
-        panel: LinearLayout,
-        initialPath: String?,
-        onPathChanged: (String?) -> Unit
-    ) {
+    private fun productPhotoControls(panel: LinearLayout, initialPath: String?, onPathChanged: (String?) -> Unit) {
         val preview = ImageView(this).apply {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.CENTER_CROP
@@ -127,13 +153,13 @@ class MainActivity : AppCompatActivity() {
         panel.addView(preview)
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actions.addView(Button(this).apply {
-            text = if (initialPath.isNullOrBlank()) "Add photo (optional)" else "Change photo"
+            text = if (initialPath.isNullOrBlank()) "Take photo (optional)" else "Take new photo"
             setOnClickListener {
                 chooseProductPhoto { path ->
                     if (path != null) {
                         onPathChanged(path)
                         showPhoto(path)
-                        text = "Change photo"
+                        text = "Take new photo"
                     }
                 }
             }
@@ -141,15 +167,10 @@ class MainActivity : AppCompatActivity() {
         actions.addView(Button(this).apply {
             text = "Remove photo"
             visibility = if (initialPath.isNullOrBlank()) View.GONE else View.VISIBLE
-            setOnClickListener {
-                onPathChanged(null)
-                showPhoto(null)
-                visibility = View.GONE
-            }
+            setOnClickListener { onPathChanged(null); showPhoto(null); visibility = View.GONE }
         })
         panel.addView(actions)
     }
-
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -322,7 +343,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderBill() {
         baseScreen("Create bill")
         button("▦  Scan barcode", { startScan() })
-        button("＋  Enter barcode / SKU", { manualBarcodeDialog() }, false)
+        button("＋  Add item", { addProductDialog("", true) }, false)
         body.addView(label("SEARCH PRODUCTS", 12f))
         val search = field("Search by product name, barcode, brand or size")
         body.addView(search, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 8 })
@@ -441,15 +462,6 @@ class MainActivity : AppCompatActivity() {
             val product = withContext(Dispatchers.IO) { dao.findByBarcode(barcode) }
             if (product != null) addProductToCart(product) else addProductDialog(barcode, true)
         }
-    }
-
-    private fun manualBarcodeDialog() {
-        val input = field("Enter barcode / SKU")
-        AlertDialog.Builder(this).setTitle("Add item").setView(input)
-            .setPositiveButton("Continue") { _, _ ->
-                val code = input.text.toString().trim()
-                if (code.isBlank()) toast("Enter a barcode") else handleBarcode(code)
-            }.setNegativeButton("Cancel", null).show()
     }
 
     private fun addProductDialog(scannedBarcode: String, addToCart: Boolean) {
