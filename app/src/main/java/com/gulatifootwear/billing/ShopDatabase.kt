@@ -66,6 +66,9 @@ interface ShopDao {
     @Query("SELECT * FROM products ORDER BY name COLLATE NOCASE")
     suspend fun allProducts(): List<Product>
 
+    @Query("SELECT barcode FROM products")
+    suspend fun allBarcodes(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveProduct(product: Product): Long
 
