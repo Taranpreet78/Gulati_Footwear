@@ -1025,9 +1025,9 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
 
-            val summary = "Backup dates: ${payload.fromDate} to ${payload.toDate}\\n\\n" +
-                "Products: ${payload.products.size}\\nBills: ${payload.invoices.size}\\n" +
-                "Bill items: ${payload.invoiceItems.size}\\nExpenses: ${payload.expenses.size}\\n\\n" +
+            val summary = "Backup dates: ${payload.fromDate} to ${payload.toDate}\n\n" +
+                "Products: ${payload.products.size}\nBills: ${payload.invoices.size}\n" +
+                "Bill items: ${payload.invoiceItems.size}\nExpenses: ${payload.expenses.size}\n\n" +
                 "This test app's existing data will be replaced. The original app is a separate installation and will not be changed. " +
                 "Old PDF files and product photos are not part of this backup."
             AlertDialog.Builder(this@MainActivity)
