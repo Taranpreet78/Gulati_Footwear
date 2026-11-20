@@ -14,7 +14,8 @@ data class Product(
     val brand: String = "",
     val purchasePrice: Double = 0.0,
     val sellingPrice: Double,
-    val stock: Int = 0
+    val stock: Int = 0,
+    val imagePath: String? = null
 )
 
 @Entity(tableName = "invoices")
@@ -133,12 +134,17 @@ interface ShopDao {
     suspend fun invoicesBetween(from: Long, to: Long): List<Invoice>
 }
 
-@Database(entities = [Product::class, Invoice::class, InvoiceItem::class, ShopExpense::class], version = 2, exportSchema = false)
+@Database(entities = [Product::class, Invoice::class, InvoiceItem::class, ShopExpense::class], version = 3, exportSchema = false)
 abstract class ShopDatabase : RoomDatabase() {
     abstract fun dao(): ShopDao
 
     companion object {
         @Volatile private var INSTANCE: ShopDatabase? = null
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN imagePath TEXT")
+            }
+        }
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("""CREATE TABLE IF NOT EXISTS invoice_items (
@@ -161,7 +167,7 @@ abstract class ShopDatabase : RoomDatabase() {
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext, ShopDatabase::class.java, "gulati_footwear.db"
-                ).addMigrations(MIGRATION_1_2).build().also { INSTANCE = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { INSTANCE = it }
             }
     }
 }
