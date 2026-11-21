@@ -1224,14 +1224,22 @@ class MainActivity : AppCompatActivity() {
                                     }
                                     val invoices = ArrayList<Invoice>()
                                     val invoiceArray = json.getJSONArray("invoices")
+                                    val restoredPdfDir = File(filesDir, "invoice_pdfs").apply { mkdirs() }
                                     for (i in 0 until invoiceArray.length()) {
                                         val x = invoiceArray.getJSONObject(i)
-                                        invoices.add(Invoice(id = x.getLong("id"), createdAt = x.getLong("createdAt"),
+                                        val id = x.getLong("id")
+                                        val pdfBytes = parsed.second["invoice_pdfs/" + id + ".pdf"]
+                                        val restoredPdfPath = if (pdfBytes != null && pdfBytes.isNotEmpty()) {
+                                            val target = File(restoredPdfDir, "restored_" + id + ".pdf")
+                                            FileOutputStream(target).use { it.write(pdfBytes) }
+                                            target.absolutePath
+                                        } else ""
+                                        invoices.add(Invoice(id = id, createdAt = x.getLong("createdAt"),
                                             invoiceNo = x.getString("invoiceNo"), customerName = x.optString("customerName", ""),
                                             customerPhone = x.optString("customerPhone", ""), subtotal = x.optDouble("subtotal", 0.0),
                                             discount = x.optDouble("discount", 0.0), gstPercent = x.optDouble("gstPercent", 0.0),
                                             total = x.optDouble("total", 0.0), paymentMode = x.optString("paymentMode", "Cash"),
-                                            pdfPath = x.optString("pdfPath", "")))
+                                            pdfPath = restoredPdfPath))
                                     }
                                     val items = ArrayList<InvoiceItem>()
                                     val itemArray = json.optJSONArray("invoiceItems") ?: JSONArray()
