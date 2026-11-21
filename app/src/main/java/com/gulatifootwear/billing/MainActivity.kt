@@ -1093,6 +1093,9 @@ class MainActivity : AppCompatActivity() {
         var to = java.util.Calendar.getInstance()
         val fromText = label("From date: ${fmt.format(from.time)}", 16f)
         val toText = label("To date: ${fmt.format(to.time)}", 16f)
+        val includePhotos = CheckBox(this).apply { text = "Include product/item photos in ZIP backup"; isChecked = true }
+        val includePdfs = CheckBox(this).apply { text = "Include existing bill PDFs in ZIP backup"; isChecked = true }
+        body.addView(label("Backup attachments", 14f)); body.addView(includePhotos); body.addView(includePdfs)
         fun pick(initial: java.util.Calendar, update: (java.util.Calendar) -> Unit) {
             DatePickerDialog(this, { _, y, m, d ->
                 val chosen = java.util.Calendar.getInstance().apply { set(y, m, d, 0, 0, 0); set(java.util.Calendar.MILLISECOND, 0) }
@@ -1117,10 +1120,12 @@ class MainActivity : AppCompatActivity() {
                         val invoices = dao.invoicesBetween(start, end.timeInMillis)
                         val expenses = dao.expenses(start, end.timeInMillis)
                         val lines = invoices.flatMap { dao.invoiceItems(it.id) }
+                        val savePhotos = includePhotos.isChecked
+                        val savePdfs = includePdfs.isChecked
                         val json = JSONObject().put("app", SHOP_NAME).put("backupCreatedAt", System.currentTimeMillis())
                             .put("from", fmt.format(from.time)).put("to", fmt.format(to.time))
-                        json.put("products", JSONArray().apply { products.forEach { put(JSONObject().put("id",it.id).put("barcode",it.barcode).put("name",it.name).put("brand",it.brand).put("size",it.size).put("purchasePrice",it.purchasePrice).put("sellingPrice",it.sellingPrice).put("stock",it.stock).put("hasImage", !it.imagePath.isNullOrBlank() && File(it.imagePath).exists())) } })
-                        json.put("invoices", JSONArray().apply { invoices.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("invoiceNo",it.invoiceNo).put("customerName",it.customerName).put("customerPhone",it.customerPhone).put("subtotal",it.subtotal).put("discount",it.discount).put("gstPercent",it.gstPercent).put("total",it.total).put("paymentMode",it.paymentMode).put("pdfPath",it.pdfPath)) } })
+                        json.put("products", JSONArray().apply { products.forEach { put(JSONObject().put("id",it.id).put("barcode",it.barcode).put("name",it.name).put("brand",it.brand).put("size",it.size).put("purchasePrice",it.purchasePrice).put("sellingPrice",it.sellingPrice).put("stock",it.stock).put("hasImage", savePhotos && !it.imagePath.isNullOrBlank() && File(it.imagePath).exists())) } })
+                        json.put("invoices", JSONArray().apply { invoices.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("invoiceNo",it.invoiceNo).put("customerName",it.customerName).put("customerPhone",it.customerPhone).put("subtotal",it.subtotal).put("discount",it.discount).put("gstPercent",it.gstPercent).put("total",it.total).put("paymentMode",it.paymentMode).put("pdfPath",if (savePdfs && File(it.pdfPath).exists()) "invoice_pdfs/${it.id}.pdf" else "").put("hasPdf",savePdfs && File(it.pdfPath).isFile)) } })
                         json.put("invoiceItems", JSONArray().apply { lines.forEach { put(JSONObject().put("id",it.id).put("invoiceId",it.invoiceId).put("productId",it.productId).put("barcode",it.barcode).put("productName",it.productName).put("size",it.size).put("quantity",it.quantity).put("sellingPrice",it.sellingPrice).put("purchasePrice",it.purchasePrice).put("createdAt",it.createdAt)) } })
                         json.put("expenses", JSONArray().apply { expenses.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("title",it.title).put("amount",it.amount).put("note",it.note)) } })
                         val dir = File(cacheDir, "backups").apply { mkdirs() }
@@ -1130,10 +1135,18 @@ class MainActivity : AppCompatActivity() {
                             z.write(json.toString(2).toByteArray(Charsets.UTF_8))
                             z.closeEntry()
                             products.forEach { product ->
-                                val imageFile = product.imagePath?.let { File(it) }
+                                val imageFile = if (savePhotos) product.imagePath?.let { File(it) } else null
                                 if (imageFile != null && imageFile.exists() && imageFile.isFile) {
                                     z.putNextEntry(java.util.zip.ZipEntry("product_images/" + product.id + ".jpg"))
                                     imageFile.inputStream().use { it.copyTo(z) }
+                                    z.closeEntry()
+                                }
+                            }
+                            if (savePdfs) invoices.forEach { invoice ->
+                                val pdf = File(invoice.pdfPath)
+                                if (pdf.isFile) {
+                                    z.putNextEntry(java.util.zip.ZipEntry("invoice_pdfs/${invoice.id}.pdf"))
+                                    pdf.inputStream().use { it.copyTo(z) }
                                     z.closeEntry()
                                 }
                             }
@@ -1151,7 +1164,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
         button("↻  Restore backup from ZIP", { restoreZipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*")) }, false)
-        body.addView(label("Restore replaces current products, bills and expenses. Make a backup before restoring. New ZIP backups also contain product photos.", 12f))
+        body.addView(label("Restore replaces current products, bills and expenses. Make a backup before restoring. Photos and PDFs are restored only if included in the ZIP.", 12f))
     }
 
 
@@ -1166,7 +1179,7 @@ class MainActivity : AppCompatActivity() {
                             val entry = zip.nextEntry ?: break
                             if (!entry.isDirectory) {
                                 val name = entry.name
-                                if (name == "backup.json" || (name.startsWith("product_images/") && name.endsWith(".jpg"))) {
+                                if (name == "backup.json" || (name.startsWith("product_images/") && name.endsWith(".jpg")) || (name.startsWith("invoice_pdfs/") && name.endsWith(".pdf"))) {
                                     val bytes = zip.readBytes()
                                     totalBytes += bytes.size
                                     require(totalBytes <= 150L * 1024L * 1024L) { "Backup exceeds 150 MB" }
