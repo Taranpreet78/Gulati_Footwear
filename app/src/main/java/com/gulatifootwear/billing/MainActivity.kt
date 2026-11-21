@@ -134,6 +134,39 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showProductPhoto(path: String?) {
+        if (path.isNullOrBlank() || !File(path).exists()) {
+            toast("No product photo available")
+            return
+        }
+        val image = ImageView(this).apply {
+            setImageURI(Uri.fromFile(File(path)))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds = true
+            setBackgroundColor(Color.BLACK)
+            setOnClickListener {
+                scaleType = if (scaleType == ImageView.ScaleType.FIT_CENTER)
+                    ImageView.ScaleType.CENTER_CROP else ImageView.ScaleType.FIT_CENTER
+            }
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Product photo • Tap image to zoom")
+            .setView(image)
+            .setPositiveButton("Close", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.window?.setLayout(
+                (resources.displayMetrics.widthPixels * 0.92).toInt(),
+                (resources.displayMetrics.heightPixels * 0.78).toInt()
+            )
+        }
+        dialog.show()
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.92).toInt(),
+            (resources.displayMetrics.heightPixels * 0.78).toInt()
+        )
+    }
+
     private fun productPhotoControls(panel: LinearLayout, initialPath: String?, onPathChanged: (String?) -> Unit) {
         val preview = ImageView(this).apply {
             adjustViewBounds = true
@@ -150,6 +183,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         showPhoto(initialPath)
+        preview.setOnClickListener { showProductPhoto(initialPath) }
         panel.addView(preview)
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actions.addView(Button(this).apply {
@@ -359,12 +393,29 @@ class MainActivity : AppCompatActivity() {
                     val found = withContext(Dispatchers.IO) { dao.searchProducts(q) }
                     if (search.text.toString().trim() != q) return@launch
                     found.take(12).forEach { p ->
+                        val resultRow = LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            setPadding(8, 7, 8, 7)
+                            background = rounded(Color.WHITE, 12f)
+                        }
+                        if (!p.imagePath.isNullOrBlank() && File(p.imagePath).exists()) {
+                            val thumb = ImageView(this@MainActivity).apply {
+                                setImageURI(Uri.fromFile(File(p.imagePath!!)))
+                                scaleType = ImageView.ScaleType.CENTER_CROP
+                                layoutParams = LinearLayout.LayoutParams(58, 58).apply { rightMargin = 10 }
+                                contentDescription = "View product photo"
+                                setOnClickListener { showProductPhoto(p.imagePath) }
+                            }
+                            resultRow.addView(thumb)
+                        }
                         val item = TextView(this@MainActivity).apply {
                             text = "${p.name}  ${p.size}\n${p.barcode} • ${money(p.sellingPrice)} • Stock ${p.stock}"
-                            textSize = 14f; setTextColor(INK); setPadding(12, 11, 12, 11); background = rounded(Color.WHITE, 12f)
+                            textSize = 14f; setTextColor(INK); setPadding(6, 8, 8, 8)
                             setOnClickListener { addProductToCart(p); search.setText("") }
                         }
-                        results.addView(item, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 5 })
+                        resultRow.addView(item, LinearLayout.LayoutParams(0, -2, 1f))
+                        results.addView(resultRow, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 5 })
                     }
                     if (found.isEmpty()) results.addView(label("No matching product found. Use barcode scan to add it."))
                 }
@@ -539,6 +590,16 @@ class MainActivity : AppCompatActivity() {
                 list.removeAllViews()
                 products.forEach { p ->
                     val c = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(13, 11, 13, 11); background = rounded(Color.WHITE) }
+                    if (!p.imagePath.isNullOrBlank() && File(p.imagePath).exists()) {
+                        val thumb = ImageView(this@MainActivity).apply {
+                            setImageURI(Uri.fromFile(File(p.imagePath!!)))
+                            scaleType = ImageView.ScaleType.CENTER_CROP
+                            layoutParams = LinearLayout.LayoutParams(88, 88).apply { bottomMargin = 6 }
+                            contentDescription = "Tap to open product photo"
+                            setOnClickListener { showProductPhoto(p.imagePath) }
+                        }
+                        c.addView(thumb)
+                    }
                     c.addView(label("${p.name} ${p.size}", 16f))
                     c.addView(label("${p.barcode} • ${money(p.sellingPrice)} • Cost ${money(p.purchasePrice)} • Stock ${p.stock}", 12f))
                     val actions = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
