@@ -1113,6 +1113,8 @@ class MainActivity : AppCompatActivity() {
                 set(java.util.Calendar.SECOND, 59); set(java.util.Calendar.MILLISECOND, 999)
             }
             if (start > end.timeInMillis) { toast("From date must be before To date"); return@button }
+            val savePhotos = includePhotos.isChecked
+            val savePdfs = includePdfs.isChecked
             lifecycleScope.launch {
                 try {
                     val file = withContext(Dispatchers.IO) {
@@ -1120,8 +1122,6 @@ class MainActivity : AppCompatActivity() {
                         val invoices = dao.invoicesBetween(start, end.timeInMillis)
                         val expenses = dao.expenses(start, end.timeInMillis)
                         val lines = invoices.flatMap { dao.invoiceItems(it.id) }
-                        val savePhotos = includePhotos.isChecked
-                        val savePdfs = includePdfs.isChecked
                         val json = JSONObject().put("app", SHOP_NAME).put("backupCreatedAt", System.currentTimeMillis())
                             .put("from", fmt.format(from.time)).put("to", fmt.format(to.time))
                         json.put("products", JSONArray().apply { products.forEach { put(JSONObject().put("id",it.id).put("barcode",it.barcode).put("name",it.name).put("brand",it.brand).put("size",it.size).put("purchasePrice",it.purchasePrice).put("sellingPrice",it.sellingPrice).put("stock",it.stock).put("hasImage", savePhotos && !it.imagePath.isNullOrBlank() && File(it.imagePath).exists())) } })
