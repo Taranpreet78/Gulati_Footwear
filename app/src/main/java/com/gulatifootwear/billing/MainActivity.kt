@@ -173,7 +173,9 @@ class MainActivity : AppCompatActivity() {
             scaleType = ImageView.ScaleType.CENTER_CROP
             layoutParams = LinearLayout.LayoutParams(150, 150).apply { bottomMargin = 8 }
         }
+        var currentPhotoPath = initialPath
         fun showPhoto(path: String?) {
+            currentPhotoPath = path
             if (!path.isNullOrBlank() && File(path).exists()) {
                 preview.setImageURI(Uri.fromFile(File(path)))
                 preview.visibility = View.VISIBLE
@@ -183,7 +185,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         showPhoto(initialPath)
-        preview.setOnClickListener { showProductPhoto(initialPath) }
+        preview.setOnClickListener { showProductPhoto(currentPhotoPath) }
         panel.addView(preview)
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actions.addView(Button(this).apply {
