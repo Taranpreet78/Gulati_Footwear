@@ -278,6 +278,7 @@ class MainActivity : AppCompatActivity() {
             "▤   Bill history" to { historyScreen() },
             "▥   Profit & loss" to { analyticsScreen("Today") },
             "＋   Add shop expense" to { addExpenseDialog() },
+            "♙   Wholesaler accounts" to { wholesalerScreen() },
             "⇧   Database backup & restore" to { backupScreen() },
             "ⓘ   Shop details" to { shopDetails() }
         )
@@ -1081,6 +1082,101 @@ class MainActivity : AppCompatActivity() {
                         }.show()
                 } })
                 c.addView(actions)
+            }
+        }
+    }
+
+    private fun wholesalerScreen() {
+        baseScreen("Wholesaler accounts")
+        button("+ Add wholesaler", { addWholesalerDialog() })
+        lifecycleScope.launch {
+            val suppliers = withContext(Dispatchers.IO) { dao.allWholesalers() }
+            val purchaseTotal = withContext(Dispatchers.IO) { dao.totalWholesalerPurchases() }
+            val paidTotal = withContext(Dispatchers.IO) { dao.totalWholesalerPayments() }
+            statCard("TOTAL OUTSTANDING TO ALL WHOLESALERS", money(purchaseTotal - paidTotal), "Total bills ${money(purchaseTotal)} • Paid ${money(paidTotal)}")
+            if (suppliers.isEmpty()) body.addView(label("No wholesaler added yet. Tap Add wholesaler to begin."))
+            suppliers.forEach { supplier ->
+                val purchased = withContext(Dispatchers.IO) { dao.wholesalerPurchased(supplier.id) }
+                val paid = withContext(Dispatchers.IO) { dao.wholesalerPaid(supplier.id) }
+                val c = card()
+                c.addView(label(supplier.name, 18f))
+                if (supplier.phone.isNotBlank()) c.addView(label("Phone: " + supplier.phone, 13f))
+                c.addView(label("Bills: ${money(purchased)}\nPaid: ${money(paid)}\nBalance due: ${money(purchased-paid)}", 15f))
+                val actions = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+                actions.addView(Button(this@MainActivity).apply { text = "Add purchase"; setOnClickListener { supplierEntryDialog(supplier, true) } })
+                actions.addView(Button(this@MainActivity).apply { text = "Record payment"; setOnClickListener { supplierEntryDialog(supplier, false) } })
+                actions.addView(Button(this@MainActivity).apply { text = "Ledger"; setOnClickListener { wholesalerLedger(supplier) } })
+                c.addView(actions)
+            }
+        }
+    }
+
+    private fun addWholesalerDialog() {
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 8, 20, 4) }
+        val name = field("Wholesaler / supplier name")
+        val phone = field("Phone number (optional)", "", InputType.TYPE_CLASS_PHONE)
+        val note = field("Address or note (optional)")
+        panel.addView(name); panel.addView(phone); panel.addView(note)
+        val dialog = AlertDialog.Builder(this).setTitle("Add wholesaler").setView(panel).setNegativeButton("Cancel", null).setPositiveButton("Save", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                if (name.text.toString().trim().isEmpty()) { name.error = "Enter wholesaler name"; return@setOnClickListener }
+                lifecycleScope.launch { withContext(Dispatchers.IO) { dao.addWholesaler(Wholesaler(name=name.text.toString().trim(), phone=phone.text.toString().trim(), note=note.text.toString().trim())) }; dialog.dismiss(); wholesalerScreen() }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun supplierEntryDialog(supplier: Wholesaler, purchase: Boolean) {
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 8, 20, 4) }
+        val dateFmt = SimpleDateFormat("dd-MM-yyyy", Locale.getDefault())
+        var selected = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY,0); set(Calendar.MINUTE,0); set(Calendar.SECOND,0); set(Calendar.MILLISECOND,0) }
+        val dateLabel = label("Date: " + dateFmt.format(selected.time), 15f)
+        val dateButton = Button(this).apply { text = "Select date"; setOnClickListener {
+            DatePickerDialog(this@MainActivity, { _, y, m, d -> selected = Calendar.getInstance().apply { set(y,m,d,0,0,0); set(Calendar.MILLISECOND,0) }; dateLabel.text = "Date: " + dateFmt.format(selected.time) },
+                selected.get(Calendar.YEAR), selected.get(Calendar.MONTH), selected.get(Calendar.DAY_OF_MONTH)).show()
+        } }
+        val amount = field(if (purchase) "Purchase bill amount (₹)" else "Payment amount (₹)", "", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
+        val billNo = field("Bill / invoice number (optional)")
+        val note = field("Note (optional)")
+        panel.addView(dateButton); panel.addView(dateLabel); panel.addView(amount)
+        if (purchase) panel.addView(billNo)
+        panel.addView(note)
+        val dialog = AlertDialog.Builder(this).setTitle(if (purchase) "Purchase from ${supplier.name}" else "Payment to ${supplier.name}")
+            .setView(panel).setNegativeButton("Cancel", null).setPositiveButton("Save", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val value = amount.text.toString().toDoubleOrNull()
+                if (value == null || value <= 0.0) { amount.error = "Enter a valid amount"; return@setOnClickListener }
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        if (purchase) dao.addWholesalerPurchase(WholesalerPurchase(wholesalerId=supplier.id, purchaseDate=selected.timeInMillis, billAmount=value, billNumber=billNo.text.toString().trim(), note=note.text.toString().trim()))
+                        else dao.addWholesalerPayment(WholesalerPayment(wholesalerId=supplier.id, paymentDate=selected.timeInMillis, amount=value, note=note.text.toString().trim()))
+                    }
+                    dialog.dismiss(); toast(if (purchase) "Purchase bill saved" else "Payment recorded"); wholesalerScreen()
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun wholesalerLedger(supplier: Wholesaler) {
+        baseScreen("${supplier.name} • Ledger")
+        lifecycleScope.launch {
+            val purchases = withContext(Dispatchers.IO) { dao.wholesalerPurchases(supplier.id) }
+            val payments = withContext(Dispatchers.IO) { dao.wholesalerPayments(supplier.id) }
+            val purchased = purchases.sumOf { it.billAmount }; val paid = payments.sumOf { it.amount }
+            statCard("CURRENT BALANCE", money(purchased-paid), "Purchases ${money(purchased)} • Payments ${money(paid)}")
+            button("＋ Record purchase", { supplierEntryDialog(supplier, true) }, false)
+            button("＋ Record payment", { supplierEntryDialog(supplier, false) }, false)
+            val rows = (purchases.map { Triple(it.purchaseDate, "Purchase • " + (it.billNumber.ifBlank { "Bill" }), it.billAmount) } +
+                payments.map { Triple(it.paymentDate, "Payment", -it.amount) }).sortedByDescending { it.first }
+            if (rows.isEmpty()) body.addView(label("No entries recorded for this wholesaler."))
+            rows.forEach { row ->
+                val c = card()
+                c.addView(label(SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(row.first)), 12f))
+                c.addView(label(row.second, 15f))
+                c.addView(label(if (row.third >= 0) "Bill: ${money(row.third)}" else "Paid: ${money(-row.third)}", 14f))
             }
         }
     }
