@@ -1268,7 +1268,8 @@ class MainActivity : AppCompatActivity() {
         val toText = label("To date: ${fmt.format(to.time)}", 16f)
         val includePhotos = CheckBox(this).apply { text = "Include product/item photos in ZIP backup"; isChecked = true }
         val includePdfs = CheckBox(this).apply { text = "Include existing bill PDFs in ZIP backup"; isChecked = true }
-        body.addView(label("Backup attachments", 14f)); body.addView(includePhotos); body.addView(includePdfs)
+        val includeSupplierPhotos = CheckBox(this).apply { text = "Include wholesaler purchase bill photos"; isChecked = true }
+        body.addView(label("Backup attachments", 14f)); body.addView(includePhotos); body.addView(includePdfs); body.addView(includeSupplierPhotos)
         fun pick(initial: java.util.Calendar, update: (java.util.Calendar) -> Unit) {
             DatePickerDialog(this, { _, y, m, d ->
                 val chosen = java.util.Calendar.getInstance().apply { set(y, m, d, 0, 0, 0); set(java.util.Calendar.MILLISECOND, 0) }
@@ -1288,6 +1289,7 @@ class MainActivity : AppCompatActivity() {
             if (start > end.timeInMillis) { toast("From date must be before To date"); return@button }
             val savePhotos = includePhotos.isChecked
             val savePdfs = includePdfs.isChecked
+            val saveSupplierPhotos = includeSupplierPhotos.isChecked
             lifecycleScope.launch {
                 try {
                     val file = withContext(Dispatchers.IO) {
@@ -1305,7 +1307,11 @@ class MainActivity : AppCompatActivity() {
                         val supplierPurchases = wholesalers.flatMap { dao.wholesalerPurchases(it.id) }
                         val supplierPayments = wholesalers.flatMap { dao.wholesalerPayments(it.id) }
                         json.put("wholesalers", JSONArray().apply { wholesalers.forEach { put(JSONObject().put("id",it.id).put("name",it.name).put("phone",it.phone).put("note",it.note)) } })
-                        json.put("wholesalerPurchases", JSONArray().apply { supplierPurchases.forEach { put(JSONObject().put("id",it.id).put("wholesalerId",it.wholesalerId).put("purchaseDate",it.purchaseDate).put("billAmount",it.billAmount).put("billNumber",it.billNumber).put("note",it.note)) } })
+                        json.put("wholesalerPurchases", JSONArray().apply { supplierPurchases.forEach { purchase ->
+                            val files = JSONArray()
+                            if (saveSupplierPhotos) JSONArray(purchase.photoPathsJson).let { paths -> for (i in 0 until paths.length()) { val path = paths.optString(i); if (path.isNotBlank() && File(path).isFile) files.put("supplier_bill_photos/purchase_${purchase.id}_${i + 1}.jpg") } }
+                            put(JSONObject().put("id",purchase.id).put("wholesalerId",purchase.wholesalerId).put("purchaseDate",purchase.purchaseDate).put("billAmount",purchase.billAmount).put("billNumber",purchase.billNumber).put("note",purchase.note).put("photoFiles",files))
+                        } })
                         json.put("wholesalerPayments", JSONArray().apply { supplierPayments.forEach { put(JSONObject().put("id",it.id).put("wholesalerId",it.wholesalerId).put("paymentDate",it.paymentDate).put("amount",it.amount).put("note",it.note)) } })
                         val dir = File(cacheDir, "backups").apply { mkdirs() }
                         val out = File(dir, "Gulati_Backup_${fmt.format(from.time)}_to_${fmt.format(to.time)}.zip")
@@ -1319,6 +1325,16 @@ class MainActivity : AppCompatActivity() {
                                     z.putNextEntry(java.util.zip.ZipEntry("product_images/" + product.id + ".jpg"))
                                     imageFile.inputStream().use { it.copyTo(z) }
                                     z.closeEntry()
+                                }
+                            }
+                            if (saveSupplierPhotos) supplierPurchases.forEach { purchase ->
+                                val paths = JSONArray(purchase.photoPathsJson)
+                                for (i in 0 until paths.length()) {
+                                    val photo = File(paths.optString(i))
+                                    if (photo.isFile) {
+                                        z.putNextEntry(java.util.zip.ZipEntry("supplier_bill_photos/purchase_${purchase.id}_${i + 1}.jpg"))
+                                        photo.inputStream().use { it.copyTo(z) }; z.closeEntry()
+                                    }
                                 }
                             }
                             if (savePdfs) invoices.forEach { invoice ->
@@ -1358,7 +1374,7 @@ class MainActivity : AppCompatActivity() {
                             val entry = zip.nextEntry ?: break
                             if (!entry.isDirectory) {
                                 val name = entry.name
-                                if (name == "backup.json" || (name.startsWith("product_images/") && name.endsWith(".jpg")) || (name.startsWith("invoice_pdfs/") && name.endsWith(".pdf"))) {
+                                if (name == "backup.json" || (name.startsWith("product_images/") && name.endsWith(".jpg")) || (name.startsWith("invoice_pdfs/") && name.endsWith(".pdf")) || (name.startsWith("supplier_bill_photos/") && name.endsWith(".jpg"))) {
                                     val bytes = zip.readBytes()
                                     totalBytes += bytes.size
                                     require(totalBytes <= 150L * 1024L * 1024L) { "Backup exceeds 150 MB" }
@@ -1450,7 +1466,20 @@ class MainActivity : AppCompatActivity() {
                                     val purchaseArray = json.optJSONArray("wholesalerPurchases") ?: JSONArray()
                                     for (i in 0 until purchaseArray.length()) {
                                         val x = purchaseArray.getJSONObject(i)
-                                        supplierPurchases.add(WholesalerPurchase(id=x.getLong("id"), wholesalerId=x.getLong("wholesalerId"), purchaseDate=x.getLong("purchaseDate"), billAmount=x.optDouble("billAmount",0.0), billNumber=x.optString("billNumber",""), note=x.optString("note","")))
+                                        val purchaseId = x.getLong("id")
+                                        val photoNames = x.optJSONArray("photoFiles") ?: JSONArray()
+                                        val restoredPhotoPaths = JSONArray()
+                                        val supplierPhotoDir = File(filesDir, "supplier_bill_photos").apply { mkdirs() }
+                                        for (p in 0 until photoNames.length()) {
+                                            val entryName = photoNames.optString(p)
+                                            val bytes = parsed.second[entryName]
+                                            if (bytes != null && bytes.isNotEmpty()) {
+                                                val target = File(supplierPhotoDir, "restored_purchase_${purchaseId}_${p + 1}.jpg")
+                                                FileOutputStream(target).use { it.write(bytes) }
+                                                restoredPhotoPaths.put(target.absolutePath)
+                                            }
+                                        }
+                                        supplierPurchases.add(WholesalerPurchase(id=purchaseId, wholesalerId=x.getLong("wholesalerId"), purchaseDate=x.getLong("purchaseDate"), billAmount=x.optDouble("billAmount",0.0), billNumber=x.optString("billNumber",""), note=x.optString("note",""), photoPathsJson=restoredPhotoPaths.toString()))
                                     }
                                     val supplierPayments = ArrayList<WholesalerPayment>()
                                     val paymentArray = json.optJSONArray("wholesalerPayments") ?: JSONArray()
