@@ -12,13 +12,26 @@ android {
         applicationId = "com.gulatifootwear.billing"
         minSdk = 23
         targetSdk = 35
-        versionCode = 5
-        versionName = "2.3"
+        versionCode = 9
+        versionName = "2.7"
+    }
+
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("CM_KEYSTORE_PATH")
+            if (!keystorePath.isNullOrBlank()) {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("CM_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("CM_KEY_ALIAS")
+                keyPassword = System.getenv("CM_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

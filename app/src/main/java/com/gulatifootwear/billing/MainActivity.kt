@@ -6,6 +6,7 @@ import android.app.DatePickerDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.*
+import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
@@ -78,43 +79,103 @@ class MainActivity : AppCompatActivity() {
         if (uri != null) importExcel(uri)
     }
 
-    private var selectedProductImagePath: String? = null
     private var productImageResult: ((String?) -> Unit)? = null
-    private val productImagePicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri == null) return@registerForActivityResult
-        lifecycleScope.launch {
-            val savedPath = withContext(Dispatchers.IO) {
-                try {
-                    val folder = File(filesDir, "product_images").apply { mkdirs() }
-                    val target = File(folder, "product_${System.currentTimeMillis()}.jpg")
-                    contentResolver.openInputStream(uri)?.use { input ->
-                        target.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    if (target.exists() && target.length() > 0) target.absolutePath else null
-                } catch (_: Exception) { null }
-            }
-            if (savedPath == null) toast("Unable to save product photo")
-            productImageResult?.invoke(savedPath)
+    private var pendingCameraPhoto: File? = null
+    private val productCameraLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        val captured = pendingCameraPhoto
+        pendingCameraPhoto = null
+        if (!success || captured == null || !captured.exists()) {
+            captured?.delete()
+            productImageResult?.invoke(null)
             productImageResult = null
+        } else {
+            lifecycleScope.launch {
+                val savedPath = withContext(Dispatchers.IO) {
+                    try {
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeFile(captured.absolutePath, bounds)
+                        var sample = 1
+                        while (bounds.outWidth / sample > 1600 || bounds.outHeight / sample > 1600) sample *= 2
+                        val bitmap = BitmapFactory.decodeFile(captured.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
+                            ?: throw IllegalStateException("Camera image could not be opened")
+                        val scale = minOf(1f, 1400f / maxOf(bitmap.width, bitmap.height))
+                        val resized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
+                        val folder = File(filesDir, "product_images").apply { mkdirs() }
+                        val target = File(folder, "product_${System.currentTimeMillis()}.jpg")
+                        FileOutputStream(target).use { resized.compress(Bitmap.CompressFormat.JPEG, 78, it) }
+                        if (resized !== bitmap) bitmap.recycle()
+                        resized.recycle()
+                        captured.delete()
+                        if (target.exists() && target.length() > 0) target.absolutePath else null
+                    } catch (_: Exception) { captured.delete(); null }
+                }
+                if (savedPath == null) toast("Unable to save product photo")
+                productImageResult?.invoke(savedPath)
+                productImageResult = null
+            }
         }
+    }
+
+    private val restoreZipPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) confirmAndRestoreBackup(uri)
     }
 
     private fun chooseProductPhoto(onSelected: (String?) -> Unit) {
         productImageResult = onSelected
-        productImagePicker.launch("image/*")
+        try {
+            val folder = File(cacheDir, "camera_products").apply { mkdirs() }
+            val capture = File(folder, "capture_${System.currentTimeMillis()}.jpg")
+            pendingCameraPhoto = capture
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", capture)
+            productCameraLauncher.launch(uri)
+        } catch (e: Exception) {
+            productImageResult = null
+            toast("Unable to open camera: ${e.message}")
+        }
     }
 
-    private fun productPhotoControls(
-        panel: LinearLayout,
-        initialPath: String?,
-        onPathChanged: (String?) -> Unit
-    ) {
+    private fun showProductPhoto(path: String?) {
+        if (path.isNullOrBlank() || !File(path).exists()) {
+            toast("No product photo available")
+            return
+        }
+        val image = ImageView(this).apply {
+            setImageURI(Uri.fromFile(File(path)))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds = true
+            setBackgroundColor(Color.BLACK)
+            setOnClickListener {
+                scaleType = if (scaleType == ImageView.ScaleType.FIT_CENTER)
+                    ImageView.ScaleType.CENTER_CROP else ImageView.ScaleType.FIT_CENTER
+            }
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Product photo • Tap image to zoom")
+            .setView(image)
+            .setPositiveButton("Close", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.window?.setLayout(
+                (resources.displayMetrics.widthPixels * 0.92).toInt(),
+                (resources.displayMetrics.heightPixels * 0.78).toInt()
+            )
+        }
+        dialog.show()
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.92).toInt(),
+            (resources.displayMetrics.heightPixels * 0.78).toInt()
+        )
+    }
+
+    private fun productPhotoControls(panel: LinearLayout, initialPath: String?, onPathChanged: (String?) -> Unit) {
         val preview = ImageView(this).apply {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.CENTER_CROP
             layoutParams = LinearLayout.LayoutParams(150, 150).apply { bottomMargin = 8 }
         }
+        var currentPhotoPath = initialPath
         fun showPhoto(path: String?) {
+            currentPhotoPath = path
             if (!path.isNullOrBlank() && File(path).exists()) {
                 preview.setImageURI(Uri.fromFile(File(path)))
                 preview.visibility = View.VISIBLE
@@ -124,16 +185,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
         showPhoto(initialPath)
+        preview.setOnClickListener { showProductPhoto(currentPhotoPath) }
         panel.addView(preview)
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actions.addView(Button(this).apply {
-            text = if (initialPath.isNullOrBlank()) "Add photo (optional)" else "Change photo"
+            text = if (initialPath.isNullOrBlank()) "Take photo (optional)" else "Take new photo"
             setOnClickListener {
                 chooseProductPhoto { path ->
                     if (path != null) {
                         onPathChanged(path)
                         showPhoto(path)
-                        text = "Change photo"
+                        text = "Take new photo"
                     }
                 }
             }
@@ -141,15 +203,10 @@ class MainActivity : AppCompatActivity() {
         actions.addView(Button(this).apply {
             text = "Remove photo"
             visibility = if (initialPath.isNullOrBlank()) View.GONE else View.VISIBLE
-            setOnClickListener {
-                onPathChanged(null)
-                showPhoto(null)
-                visibility = View.GONE
-            }
+            setOnClickListener { onPathChanged(null); showPhoto(null); visibility = View.GONE }
         })
         panel.addView(actions)
     }
-
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -221,6 +278,8 @@ class MainActivity : AppCompatActivity() {
             "▤   Bill history" to { historyScreen() },
             "▥   Profit & loss" to { analyticsScreen("Today") },
             "＋   Add shop expense" to { addExpenseDialog() },
+            "♙   Wholesaler accounts" to { wholesalerScreen() },
+            "⇧   Database backup & restore" to { backupScreen() },
             "ⓘ   Shop details" to { shopDetails() }
         )
         navItems.forEach { item ->
@@ -290,7 +349,7 @@ class MainActivity : AppCompatActivity() {
         button("▤  Bill history", { historyScreen() }, false)
         button("▥  Profit & loss dashboard", { analyticsScreen("Today") }, false)
         button("＋  Add shop expense", { addExpenseDialog() }, false)
-        button("✉  Date-range database backup", { backupScreen() }, false)
+        button("✉  Database backup & restore", { backupScreen() }, false)
         val info = card()
         info.addView(label("SHOP DETAILS", 12f))
         info.addView(label("$SHOP_ADDRESS\nPhone: $SHOP_PHONE\nUPI: $SHOP_UPI", 13f))
@@ -322,7 +381,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderBill() {
         baseScreen("Create bill")
         button("▦  Scan barcode", { startScan() })
-        button("＋  Enter barcode / SKU", { manualBarcodeDialog() }, false)
+        button("＋  Add item", { addProductDialog("", true) }, false)
         body.addView(label("SEARCH PRODUCTS", 12f))
         val search = field("Search by product name, barcode, brand or size")
         body.addView(search, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 8 })
@@ -337,12 +396,29 @@ class MainActivity : AppCompatActivity() {
                     val found = withContext(Dispatchers.IO) { dao.searchProducts(q) }
                     if (search.text.toString().trim() != q) return@launch
                     found.take(12).forEach { p ->
+                        val resultRow = LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            setPadding(8, 7, 8, 7)
+                            background = rounded(Color.WHITE, 12f)
+                        }
+                        if (!p.imagePath.isNullOrBlank() && File(p.imagePath).exists()) {
+                            val thumb = ImageView(this@MainActivity).apply {
+                                setImageURI(Uri.fromFile(File(p.imagePath!!)))
+                                scaleType = ImageView.ScaleType.CENTER_CROP
+                                layoutParams = LinearLayout.LayoutParams(58, 58).apply { rightMargin = 10 }
+                                contentDescription = "View product photo"
+                                setOnClickListener { showProductPhoto(p.imagePath) }
+                            }
+                            resultRow.addView(thumb)
+                        }
                         val item = TextView(this@MainActivity).apply {
                             text = "${p.name}  ${p.size}\n${p.barcode} • ${money(p.sellingPrice)} • Stock ${p.stock}"
-                            textSize = 14f; setTextColor(INK); setPadding(12, 11, 12, 11); background = rounded(Color.WHITE, 12f)
+                            textSize = 14f; setTextColor(INK); setPadding(6, 8, 8, 8)
                             setOnClickListener { addProductToCart(p); search.setText("") }
                         }
-                        results.addView(item, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 5 })
+                        resultRow.addView(item, LinearLayout.LayoutParams(0, -2, 1f))
+                        results.addView(resultRow, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 5 })
                     }
                     if (found.isEmpty()) results.addView(label("No matching product found. Use barcode scan to add it."))
                 }
@@ -443,25 +519,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun manualBarcodeDialog() {
-        val input = field("Enter barcode / SKU")
-        AlertDialog.Builder(this).setTitle("Add item").setView(input)
-            .setPositiveButton("Continue") { _, _ ->
-                val code = input.text.toString().trim()
-                if (code.isBlank()) toast("Enter a barcode") else handleBarcode(code)
-            }.setNegativeButton("Cancel", null).show()
-    }
-
     private fun addProductDialog(scannedBarcode: String, addToCart: Boolean) {
-        // New products use the shop's own sequential barcode series (G140, G141, ...).
-        // Keep the highest existing G-number so older inventory and imported products remain intact.
+        // New products use the shop's own sequential barcode series starting at G100.
+        // Continue after the highest existing G-number and never reuse an existing barcode.
         lifecycleScope.launch {
             val existingBarcodes = withContext(Dispatchers.IO) { dao.allBarcodes() }
             val highestNumber = existingBarcodes.mapNotNull { code ->
                 Regex("^G(\\d+)$", RegexOption.IGNORE_CASE)
                     .matchEntire(code.trim())?.groupValues?.get(1)?.toIntOrNull()
-            }.maxOrNull() ?: 139
-            val newBarcode = "G" + (maxOf(139, highestNumber) + 1)
+            }.maxOrNull() ?: 99
+            val newBarcode = "G" + (maxOf(99, highestNumber) + 1)
 
             val panel = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -526,6 +593,16 @@ class MainActivity : AppCompatActivity() {
                 list.removeAllViews()
                 products.forEach { p ->
                     val c = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(13, 11, 13, 11); background = rounded(Color.WHITE) }
+                    if (!p.imagePath.isNullOrBlank() && File(p.imagePath).exists()) {
+                        val thumb = ImageView(this@MainActivity).apply {
+                            setImageURI(Uri.fromFile(File(p.imagePath!!)))
+                            scaleType = ImageView.ScaleType.CENTER_CROP
+                            layoutParams = LinearLayout.LayoutParams(88, 88).apply { bottomMargin = 6 }
+                            contentDescription = "Tap to open product photo"
+                            setOnClickListener { showProductPhoto(p.imagePath) }
+                        }
+                        c.addView(thumb)
+                    }
                     c.addView(label("${p.name} ${p.size}", 16f))
                     c.addView(label("${p.barcode} • ${money(p.sellingPrice)} • Cost ${money(p.purchasePrice)} • Stock ${p.stock}", 12f))
                     val actions = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
@@ -1009,6 +1086,101 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun wholesalerScreen() {
+        baseScreen("Wholesaler accounts")
+        button("+ Add wholesaler", { addWholesalerDialog() })
+        lifecycleScope.launch {
+            val suppliers = withContext(Dispatchers.IO) { dao.allWholesalers() }
+            val purchaseTotal = withContext(Dispatchers.IO) { dao.totalWholesalerPurchases() }
+            val paidTotal = withContext(Dispatchers.IO) { dao.totalWholesalerPayments() }
+            statCard("TOTAL OUTSTANDING TO ALL WHOLESALERS", money(purchaseTotal - paidTotal), "Total bills ${money(purchaseTotal)} • Paid ${money(paidTotal)}")
+            if (suppliers.isEmpty()) body.addView(label("No wholesaler added yet. Tap Add wholesaler to begin."))
+            suppliers.forEach { supplier ->
+                val purchased = withContext(Dispatchers.IO) { dao.wholesalerPurchased(supplier.id) }
+                val paid = withContext(Dispatchers.IO) { dao.wholesalerPaid(supplier.id) }
+                val c = card()
+                c.addView(label(supplier.name, 18f))
+                if (supplier.phone.isNotBlank()) c.addView(label("Phone: " + supplier.phone, 13f))
+                c.addView(label("Bills: ${money(purchased)}\nPaid: ${money(paid)}\nBalance due: ${money(purchased-paid)}", 15f))
+                val actions = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+                actions.addView(Button(this@MainActivity).apply { text = "Add purchase"; setOnClickListener { supplierEntryDialog(supplier, true) } })
+                actions.addView(Button(this@MainActivity).apply { text = "Record payment"; setOnClickListener { supplierEntryDialog(supplier, false) } })
+                actions.addView(Button(this@MainActivity).apply { text = "Ledger"; setOnClickListener { wholesalerLedger(supplier) } })
+                c.addView(actions)
+            }
+        }
+    }
+
+    private fun addWholesalerDialog() {
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 8, 20, 4) }
+        val name = field("Wholesaler / supplier name")
+        val phone = field("Phone number (optional)", "", InputType.TYPE_CLASS_PHONE)
+        val note = field("Address or note (optional)")
+        panel.addView(name); panel.addView(phone); panel.addView(note)
+        val dialog = AlertDialog.Builder(this).setTitle("Add wholesaler").setView(panel).setNegativeButton("Cancel", null).setPositiveButton("Save", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                if (name.text.toString().trim().isEmpty()) { name.error = "Enter wholesaler name"; return@setOnClickListener }
+                lifecycleScope.launch { withContext(Dispatchers.IO) { dao.addWholesaler(Wholesaler(name=name.text.toString().trim(), phone=phone.text.toString().trim(), note=note.text.toString().trim())) }; dialog.dismiss(); wholesalerScreen() }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun supplierEntryDialog(supplier: Wholesaler, purchase: Boolean) {
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 8, 20, 4) }
+        val dateFmt = SimpleDateFormat("dd-MM-yyyy", Locale.getDefault())
+        var selected = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY,0); set(Calendar.MINUTE,0); set(Calendar.SECOND,0); set(Calendar.MILLISECOND,0) }
+        val dateLabel = label("Date: " + dateFmt.format(selected.time), 15f)
+        val dateButton = Button(this).apply { text = "Select date"; setOnClickListener {
+            DatePickerDialog(this@MainActivity, { _, y, m, d -> selected = Calendar.getInstance().apply { set(y,m,d,0,0,0); set(Calendar.MILLISECOND,0) }; dateLabel.text = "Date: " + dateFmt.format(selected.time) },
+                selected.get(Calendar.YEAR), selected.get(Calendar.MONTH), selected.get(Calendar.DAY_OF_MONTH)).show()
+        } }
+        val amount = field(if (purchase) "Purchase bill amount (₹)" else "Payment amount (₹)", "", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
+        val billNo = field("Bill / invoice number (optional)")
+        val note = field("Note (optional)")
+        panel.addView(dateButton); panel.addView(dateLabel); panel.addView(amount)
+        if (purchase) panel.addView(billNo)
+        panel.addView(note)
+        val dialog = AlertDialog.Builder(this).setTitle(if (purchase) "Purchase from ${supplier.name}" else "Payment to ${supplier.name}")
+            .setView(panel).setNegativeButton("Cancel", null).setPositiveButton("Save", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val value = amount.text.toString().toDoubleOrNull()
+                if (value == null || value <= 0.0) { amount.error = "Enter a valid amount"; return@setOnClickListener }
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        if (purchase) dao.addWholesalerPurchase(WholesalerPurchase(wholesalerId=supplier.id, purchaseDate=selected.timeInMillis, billAmount=value, billNumber=billNo.text.toString().trim(), note=note.text.toString().trim()))
+                        else dao.addWholesalerPayment(WholesalerPayment(wholesalerId=supplier.id, paymentDate=selected.timeInMillis, amount=value, note=note.text.toString().trim()))
+                    }
+                    dialog.dismiss(); toast(if (purchase) "Purchase bill saved" else "Payment recorded"); wholesalerScreen()
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun wholesalerLedger(supplier: Wholesaler) {
+        baseScreen("${supplier.name} • Ledger")
+        lifecycleScope.launch {
+            val purchases = withContext(Dispatchers.IO) { dao.wholesalerPurchases(supplier.id) }
+            val payments = withContext(Dispatchers.IO) { dao.wholesalerPayments(supplier.id) }
+            val purchased = purchases.sumOf { it.billAmount }; val paid = payments.sumOf { it.amount }
+            statCard("CURRENT BALANCE", money(purchased-paid), "Purchases ${money(purchased)} • Payments ${money(paid)}")
+            button("＋ Record purchase", { supplierEntryDialog(supplier, true) }, false)
+            button("＋ Record payment", { supplierEntryDialog(supplier, false) }, false)
+            val rows = (purchases.map { Triple(it.purchaseDate, "Purchase • " + (it.billNumber.ifBlank { "Bill" }), it.billAmount) } +
+                payments.map { Triple(it.paymentDate, "Payment", -it.amount) }).sortedByDescending { it.first }
+            if (rows.isEmpty()) body.addView(label("No entries recorded for this wholesaler."))
+            rows.forEach { row ->
+                val c = card()
+                c.addView(label(SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(row.first)), 12f))
+                c.addView(label(row.second, 15f))
+                c.addView(label(if (row.third >= 0) "Bill: ${money(row.third)}" else "Paid: ${money(-row.third)}", 14f))
+            }
+        }
+    }
+
     private fun backupScreen() {
         baseScreen("Database backup")
         body.addView(label("Choose a date range. The backup includes current product inventory and bills, bill items and expenses from the selected dates.", 13f))
@@ -1017,6 +1189,9 @@ class MainActivity : AppCompatActivity() {
         var to = java.util.Calendar.getInstance()
         val fromText = label("From date: ${fmt.format(from.time)}", 16f)
         val toText = label("To date: ${fmt.format(to.time)}", 16f)
+        val includePhotos = CheckBox(this).apply { text = "Include product/item photos in ZIP backup"; isChecked = true }
+        val includePdfs = CheckBox(this).apply { text = "Include existing bill PDFs in ZIP backup"; isChecked = true }
+        body.addView(label("Backup attachments", 14f)); body.addView(includePhotos); body.addView(includePdfs)
         fun pick(initial: java.util.Calendar, update: (java.util.Calendar) -> Unit) {
             DatePickerDialog(this, { _, y, m, d ->
                 val chosen = java.util.Calendar.getInstance().apply { set(y, m, d, 0, 0, 0); set(java.util.Calendar.MILLISECOND, 0) }
@@ -1034,6 +1209,8 @@ class MainActivity : AppCompatActivity() {
                 set(java.util.Calendar.SECOND, 59); set(java.util.Calendar.MILLISECOND, 999)
             }
             if (start > end.timeInMillis) { toast("From date must be before To date"); return@button }
+            val savePhotos = includePhotos.isChecked
+            val savePdfs = includePdfs.isChecked
             lifecycleScope.launch {
                 try {
                     val file = withContext(Dispatchers.IO) {
@@ -1043,13 +1220,39 @@ class MainActivity : AppCompatActivity() {
                         val lines = invoices.flatMap { dao.invoiceItems(it.id) }
                         val json = JSONObject().put("app", SHOP_NAME).put("backupCreatedAt", System.currentTimeMillis())
                             .put("from", fmt.format(from.time)).put("to", fmt.format(to.time))
-                        json.put("products", JSONArray().apply { products.forEach { put(JSONObject().put("id",it.id).put("barcode",it.barcode).put("name",it.name).put("brand",it.brand).put("size",it.size).put("purchasePrice",it.purchasePrice).put("sellingPrice",it.sellingPrice).put("stock",it.stock)) } })
-                        json.put("invoices", JSONArray().apply { invoices.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("invoiceNo",it.invoiceNo).put("customerName",it.customerName).put("customerPhone",it.customerPhone).put("subtotal",it.subtotal).put("discount",it.discount).put("gstPercent",it.gstPercent).put("total",it.total).put("paymentMode",it.paymentMode)) } })
+                        json.put("products", JSONArray().apply { products.forEach { put(JSONObject().put("id",it.id).put("barcode",it.barcode).put("name",it.name).put("brand",it.brand).put("size",it.size).put("purchasePrice",it.purchasePrice).put("sellingPrice",it.sellingPrice).put("stock",it.stock).put("hasImage", savePhotos && !it.imagePath.isNullOrBlank() && File(it.imagePath).exists())) } })
+                        json.put("invoices", JSONArray().apply { invoices.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("invoiceNo",it.invoiceNo).put("customerName",it.customerName).put("customerPhone",it.customerPhone).put("subtotal",it.subtotal).put("discount",it.discount).put("gstPercent",it.gstPercent).put("total",it.total).put("paymentMode",it.paymentMode).put("pdfPath",if (savePdfs && File(it.pdfPath).exists()) "invoice_pdfs/${it.id}.pdf" else "").put("hasPdf",savePdfs && File(it.pdfPath).isFile)) } })
                         json.put("invoiceItems", JSONArray().apply { lines.forEach { put(JSONObject().put("id",it.id).put("invoiceId",it.invoiceId).put("productId",it.productId).put("barcode",it.barcode).put("productName",it.productName).put("size",it.size).put("quantity",it.quantity).put("sellingPrice",it.sellingPrice).put("purchasePrice",it.purchasePrice).put("createdAt",it.createdAt)) } })
                         json.put("expenses", JSONArray().apply { expenses.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("title",it.title).put("amount",it.amount).put("note",it.note)) } })
+                        val wholesalers = dao.allWholesalers()
+                        val supplierPurchases = wholesalers.flatMap { dao.wholesalerPurchases(it.id) }
+                        val supplierPayments = wholesalers.flatMap { dao.wholesalerPayments(it.id) }
+                        json.put("wholesalers", JSONArray().apply { wholesalers.forEach { put(JSONObject().put("id",it.id).put("name",it.name).put("phone",it.phone).put("note",it.note)) } })
+                        json.put("wholesalerPurchases", JSONArray().apply { supplierPurchases.forEach { put(JSONObject().put("id",it.id).put("wholesalerId",it.wholesalerId).put("purchaseDate",it.purchaseDate).put("billAmount",it.billAmount).put("billNumber",it.billNumber).put("note",it.note)) } })
+                        json.put("wholesalerPayments", JSONArray().apply { supplierPayments.forEach { put(JSONObject().put("id",it.id).put("wholesalerId",it.wholesalerId).put("paymentDate",it.paymentDate).put("amount",it.amount).put("note",it.note)) } })
                         val dir = File(cacheDir, "backups").apply { mkdirs() }
                         val out = File(dir, "Gulati_Backup_${fmt.format(from.time)}_to_${fmt.format(to.time)}.zip")
-                        ZipOutputStream(FileOutputStream(out)).use { z -> z.putNextEntry(java.util.zip.ZipEntry("backup.json")); z.write(json.toString(2).toByteArray(Charsets.UTF_8)); z.closeEntry() }
+                        ZipOutputStream(FileOutputStream(out)).use { z ->
+                            z.putNextEntry(java.util.zip.ZipEntry("backup.json"))
+                            z.write(json.toString(2).toByteArray(Charsets.UTF_8))
+                            z.closeEntry()
+                            products.forEach { product ->
+                                val imageFile = if (savePhotos) product.imagePath?.let { File(it) } else null
+                                if (imageFile != null && imageFile.exists() && imageFile.isFile) {
+                                    z.putNextEntry(java.util.zip.ZipEntry("product_images/" + product.id + ".jpg"))
+                                    imageFile.inputStream().use { it.copyTo(z) }
+                                    z.closeEntry()
+                                }
+                            }
+                            if (savePdfs) invoices.forEach { invoice ->
+                                val pdf = File(invoice.pdfPath)
+                                if (pdf.isFile) {
+                                    z.putNextEntry(java.util.zip.ZipEntry("invoice_pdfs/${invoice.id}.pdf"))
+                                    pdf.inputStream().use { it.copyTo(z) }
+                                    z.closeEntry()
+                                }
+                            }
+                        }
                         out
                     }
                     val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", file)
@@ -1062,7 +1265,135 @@ class MainActivity : AppCompatActivity() {
                 } catch (e: Exception) { toast("Backup failed: ${e.message}") }
             }
         })
-        body.addView(label("This ZIP is a portable JSON data export, not a raw database image.", 12f))
+        button("↻  Restore backup from ZIP", { restoreZipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*")) }, false)
+        body.addView(label("Restore replaces current products, bills and expenses. Make a backup before restoring. Photos and PDFs are restored only if included in the ZIP.", 12f))
+    }
+
+
+    private fun confirmAndRestoreBackup(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                val parsed = withContext(Dispatchers.IO) {
+                    val entries = HashMap<String, ByteArray>()
+                    var totalBytes = 0L
+                    ZipInputStream(contentResolver.openInputStream(uri) ?: error("Cannot open ZIP")).use { zip ->
+                        while (true) {
+                            val entry = zip.nextEntry ?: break
+                            if (!entry.isDirectory) {
+                                val name = entry.name
+                                if (name == "backup.json" || (name.startsWith("product_images/") && name.endsWith(".jpg")) || (name.startsWith("invoice_pdfs/") && name.endsWith(".pdf"))) {
+                                    val bytes = zip.readBytes()
+                                    totalBytes += bytes.size
+                                    require(totalBytes <= 150L * 1024L * 1024L) { "Backup exceeds 150 MB" }
+                                    entries[name] = bytes
+                                }
+                            }
+                            zip.closeEntry()
+                        }
+                    }
+                    val json = JSONObject(String(entries["backup.json"] ?: error("backup.json is missing"), Charsets.UTF_8))
+                    require(json.optString("app") == SHOP_NAME) { "Not a Gulati Footwear backup" }
+                    val counts = intArrayOf(json.getJSONArray("products").length(), json.getJSONArray("invoices").length(),
+                        json.optJSONArray("invoiceItems")?.length() ?: 0, json.optJSONArray("expenses")?.length() ?: 0,
+                        json.optJSONArray("wholesalers")?.length() ?: 0, json.optJSONArray("wholesalerPurchases")?.length() ?: 0,
+                        json.optJSONArray("wholesalerPayments")?.length() ?: 0)
+                    Triple(json, entries, counts)
+                }
+                val json = parsed.first
+                val counts = parsed.third
+                AlertDialog.Builder(this@MainActivity).setTitle("Replace current data?")
+                    .setMessage("Products: " + counts[0] + "\nBills: " + counts[1] + "\nBill items: " + counts[2] + "\nExpenses: " + counts[3] +
+                        "\nWholesalers: " + counts[4] + "\nSupplier purchase bills: " + counts[5] + "\nSupplier payments: " + counts[6] +
+                        "\n\nRestoring replaces the current data. Please make a backup of current data first.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Restore") { _, _ ->
+                        lifecycleScope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    val products = ArrayList<Product>()
+                                    val productArray = json.getJSONArray("products")
+                                    val imageDir = File(filesDir, "product_images").apply { mkdirs() }
+                                    for (i in 0 until productArray.length()) {
+                                        val x = productArray.getJSONObject(i)
+                                        val id = x.getLong("id")
+                                        val image = parsed.second["product_images/" + id + ".jpg"]
+                                        val imagePath = if (image != null && image.isNotEmpty()) {
+                                            val target = File(imageDir, "restored_" + id + ".jpg")
+                                            FileOutputStream(target).use { it.write(image) }
+                                            target.absolutePath
+                                        } else null
+                                        products.add(Product(id = id, barcode = x.getString("barcode"), name = x.getString("name"),
+                                            size = x.optString("size", ""), brand = x.optString("brand", ""),
+                                            purchasePrice = x.optDouble("purchasePrice", 0.0), sellingPrice = x.optDouble("sellingPrice", 0.0),
+                                            stock = x.optInt("stock", 0), imagePath = imagePath))
+                                    }
+                                    val invoices = ArrayList<Invoice>()
+                                    val invoiceArray = json.getJSONArray("invoices")
+                                    val restoredPdfDir = File(filesDir, "invoice_pdfs").apply { mkdirs() }
+                                    for (i in 0 until invoiceArray.length()) {
+                                        val x = invoiceArray.getJSONObject(i)
+                                        val id = x.getLong("id")
+                                        val pdfBytes = parsed.second["invoice_pdfs/" + id + ".pdf"]
+                                        val restoredPdfPath = if (pdfBytes != null && pdfBytes.isNotEmpty()) {
+                                            val target = File(restoredPdfDir, "restored_" + id + ".pdf")
+                                            FileOutputStream(target).use { it.write(pdfBytes) }
+                                            target.absolutePath
+                                        } else ""
+                                        invoices.add(Invoice(id = id, createdAt = x.getLong("createdAt"),
+                                            invoiceNo = x.getString("invoiceNo"), customerName = x.optString("customerName", ""),
+                                            customerPhone = x.optString("customerPhone", ""), subtotal = x.optDouble("subtotal", 0.0),
+                                            discount = x.optDouble("discount", 0.0), gstPercent = x.optDouble("gstPercent", 0.0),
+                                            total = x.optDouble("total", 0.0), paymentMode = x.optString("paymentMode", "Cash"),
+                                            pdfPath = restoredPdfPath))
+                                    }
+                                    val items = ArrayList<InvoiceItem>()
+                                    val itemArray = json.optJSONArray("invoiceItems") ?: JSONArray()
+                                    for (i in 0 until itemArray.length()) {
+                                        val x = itemArray.getJSONObject(i)
+                                        items.add(InvoiceItem(id = x.getLong("id"), invoiceId = x.getLong("invoiceId"),
+                                            createdAt = x.getLong("createdAt"), productId = x.getLong("productId"),
+                                            barcode = x.getString("barcode"), productName = x.getString("productName"),
+                                            size = x.optString("size", ""), quantity = x.optInt("quantity", 0),
+                                            sellingPrice = x.optDouble("sellingPrice", 0.0), purchasePrice = x.optDouble("purchasePrice", 0.0)))
+                                    }
+                                    val expenses = ArrayList<ShopExpense>()
+                                    val expenseArray = json.optJSONArray("expenses") ?: JSONArray()
+                                    for (i in 0 until expenseArray.length()) {
+                                        val x = expenseArray.getJSONObject(i)
+                                        expenses.add(ShopExpense(id = x.getLong("id"), createdAt = x.getLong("createdAt"),
+                                            title = x.getString("title"), amount = x.optDouble("amount", 0.0), note = x.optString("note", "")))
+                                    }
+                                    val wholesalers = ArrayList<Wholesaler>()
+                                    val supplierArray = json.optJSONArray("wholesalers") ?: JSONArray()
+                                    for (i in 0 until supplierArray.length()) {
+                                        val x = supplierArray.getJSONObject(i)
+                                        wholesalers.add(Wholesaler(id=x.getLong("id"), name=x.getString("name"), phone=x.optString("phone",""), note=x.optString("note","")))
+                                    }
+                                    val supplierPurchases = ArrayList<WholesalerPurchase>()
+                                    val purchaseArray = json.optJSONArray("wholesalerPurchases") ?: JSONArray()
+                                    for (i in 0 until purchaseArray.length()) {
+                                        val x = purchaseArray.getJSONObject(i)
+                                        supplierPurchases.add(WholesalerPurchase(id=x.getLong("id"), wholesalerId=x.getLong("wholesalerId"), purchaseDate=x.getLong("purchaseDate"), billAmount=x.optDouble("billAmount",0.0), billNumber=x.optString("billNumber",""), note=x.optString("note","")))
+                                    }
+                                    val supplierPayments = ArrayList<WholesalerPayment>()
+                                    val paymentArray = json.optJSONArray("wholesalerPayments") ?: JSONArray()
+                                    for (i in 0 until paymentArray.length()) {
+                                        val x = paymentArray.getJSONObject(i)
+                                        supplierPayments.add(WholesalerPayment(id=x.getLong("id"), wholesalerId=x.getLong("wholesalerId"), paymentDate=x.getLong("paymentDate"), amount=x.optDouble("amount",0.0), note=x.optString("note","")))
+                                    }
+                                    dao.replaceAllData(products, invoices, items, expenses, wholesalers, supplierPurchases, supplierPayments)
+                                }
+                                toast("Backup restored successfully")
+                                showHome()
+                            } catch (e: Exception) {
+                                toast("Restore failed: " + (e.message ?: "Invalid backup"))
+                            }
+                        }
+                    }.show()
+            } catch (e: Exception) {
+                toast("Cannot read backup: " + (e.message ?: "Invalid ZIP"))
+            }
+        }
     }
 
     override fun onBackPressed() {
