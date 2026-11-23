@@ -60,7 +60,7 @@ data class ShopExpense(
 data class Wholesaler(@PrimaryKey(autoGenerate = true) val id: Long = 0, val name: String, val phone: String = "", val note: String = "")
 
 @Entity(tableName = "wholesaler_purchases", indices = [Index("wholesalerId"), Index("purchaseDate")])
-data class WholesalerPurchase(@PrimaryKey(autoGenerate = true) val id: Long = 0, val wholesalerId: Long, val purchaseDate: Long, val billAmount: Double, val billNumber: String = "", val note: String = "")
+data class WholesalerPurchase(@PrimaryKey(autoGenerate = true) val id: Long = 0, val wholesalerId: Long, val purchaseDate: Long, val billAmount: Double, val billNumber: String = "", val note: String = "", val photoPathsJson: String = "[]")
 
 @Entity(tableName = "wholesaler_payments", indices = [Index("wholesalerId"), Index("paymentDate")])
 data class WholesalerPayment(@PrimaryKey(autoGenerate = true) val id: Long = 0, val wholesalerId: Long, val paymentDate: Long, val amount: Double, val note: String = "")
@@ -148,6 +148,7 @@ interface ShopDao {
     @Update suspend fun updateWholesaler(item: Wholesaler)
     @Query("DELETE FROM wholesalers WHERE id = :id") suspend fun deleteWholesaler(id: Long): Int
     @Insert suspend fun addWholesalerPurchase(item: WholesalerPurchase): Long
+    @Update suspend fun updateWholesalerPurchase(item: WholesalerPurchase)
     @Insert suspend fun addWholesalerPayment(item: WholesalerPayment): Long
     @Query("SELECT * FROM wholesaler_purchases WHERE wholesalerId = :supplierId ORDER BY purchaseDate DESC, id DESC") suspend fun wholesalerPurchases(supplierId: Long): List<WholesalerPurchase>
     @Query("SELECT * FROM wholesaler_payments WHERE wholesalerId = :supplierId ORDER BY paymentDate DESC, id DESC") suspend fun wholesalerPayments(supplierId: Long): List<WholesalerPayment>
@@ -203,7 +204,7 @@ interface ShopDao {
     }
 }
 
-@Database(entities = [Product::class, Invoice::class, InvoiceItem::class, ShopExpense::class, Wholesaler::class, WholesalerPurchase::class, WholesalerPayment::class], version = 4, exportSchema = false)
+@Database(entities = [Product::class, Invoice::class, InvoiceItem::class, ShopExpense::class, Wholesaler::class, WholesalerPurchase::class, WholesalerPayment::class], version = 5, exportSchema = false)
 abstract class ShopDatabase : RoomDatabase() {
     abstract fun dao(): ShopDao
 
@@ -243,11 +244,16 @@ abstract class ShopDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_wholesaler_payments_paymentDate ON wholesaler_payments(paymentDate)")
             }
         }
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE wholesaler_purchases ADD COLUMN photoPathsJson TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
         fun get(context: Context): ShopDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext, ShopDatabase::class.java, "gulati_footwear.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { INSTANCE = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { INSTANCE = it }
             }
     }
 }
