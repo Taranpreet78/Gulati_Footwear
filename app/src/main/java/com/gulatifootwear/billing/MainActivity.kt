@@ -1224,6 +1224,12 @@ class MainActivity : AppCompatActivity() {
                         json.put("invoices", JSONArray().apply { invoices.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("invoiceNo",it.invoiceNo).put("customerName",it.customerName).put("customerPhone",it.customerPhone).put("subtotal",it.subtotal).put("discount",it.discount).put("gstPercent",it.gstPercent).put("total",it.total).put("paymentMode",it.paymentMode).put("pdfPath",if (savePdfs && File(it.pdfPath).exists()) "invoice_pdfs/${it.id}.pdf" else "").put("hasPdf",savePdfs && File(it.pdfPath).isFile)) } })
                         json.put("invoiceItems", JSONArray().apply { lines.forEach { put(JSONObject().put("id",it.id).put("invoiceId",it.invoiceId).put("productId",it.productId).put("barcode",it.barcode).put("productName",it.productName).put("size",it.size).put("quantity",it.quantity).put("sellingPrice",it.sellingPrice).put("purchasePrice",it.purchasePrice).put("createdAt",it.createdAt)) } })
                         json.put("expenses", JSONArray().apply { expenses.forEach { put(JSONObject().put("id",it.id).put("createdAt",it.createdAt).put("title",it.title).put("amount",it.amount).put("note",it.note)) } })
+                        val wholesalers = dao.allWholesalers()
+                        val supplierPurchases = wholesalers.flatMap { dao.wholesalerPurchases(it.id) }
+                        val supplierPayments = wholesalers.flatMap { dao.wholesalerPayments(it.id) }
+                        json.put("wholesalers", JSONArray().apply { wholesalers.forEach { put(JSONObject().put("id",it.id).put("name",it.name).put("phone",it.phone).put("note",it.note)) } })
+                        json.put("wholesalerPurchases", JSONArray().apply { supplierPurchases.forEach { put(JSONObject().put("id",it.id).put("wholesalerId",it.wholesalerId).put("purchaseDate",it.purchaseDate).put("billAmount",it.billAmount).put("billNumber",it.billNumber).put("note",it.note)) } })
+                        json.put("wholesalerPayments", JSONArray().apply { supplierPayments.forEach { put(JSONObject().put("id",it.id).put("wholesalerId",it.wholesalerId).put("paymentDate",it.paymentDate).put("amount",it.amount).put("note",it.note)) } })
                         val dir = File(cacheDir, "backups").apply { mkdirs() }
                         val out = File(dir, "Gulati_Backup_${fmt.format(from.time)}_to_${fmt.format(to.time)}.zip")
                         ZipOutputStream(FileOutputStream(out)).use { z ->
@@ -1354,7 +1360,25 @@ class MainActivity : AppCompatActivity() {
                                         expenses.add(ShopExpense(id = x.getLong("id"), createdAt = x.getLong("createdAt"),
                                             title = x.getString("title"), amount = x.optDouble("amount", 0.0), note = x.optString("note", "")))
                                     }
-                                    dao.replaceAllData(products, invoices, items, expenses)
+                                    val wholesalers = ArrayList<Wholesaler>()
+                                    val supplierArray = json.optJSONArray("wholesalers") ?: JSONArray()
+                                    for (i in 0 until supplierArray.length()) {
+                                        val x = supplierArray.getJSONObject(i)
+                                        wholesalers.add(Wholesaler(id=x.getLong("id"), name=x.getString("name"), phone=x.optString("phone",""), note=x.optString("note","")))
+                                    }
+                                    val supplierPurchases = ArrayList<WholesalerPurchase>()
+                                    val purchaseArray = json.optJSONArray("wholesalerPurchases") ?: JSONArray()
+                                    for (i in 0 until purchaseArray.length()) {
+                                        val x = purchaseArray.getJSONObject(i)
+                                        supplierPurchases.add(WholesalerPurchase(id=x.getLong("id"), wholesalerId=x.getLong("wholesalerId"), purchaseDate=x.getLong("purchaseDate"), billAmount=x.optDouble("billAmount",0.0), billNumber=x.optString("billNumber",""), note=x.optString("note","")))
+                                    }
+                                    val supplierPayments = ArrayList<WholesalerPayment>()
+                                    val paymentArray = json.optJSONArray("wholesalerPayments") ?: JSONArray()
+                                    for (i in 0 until paymentArray.length()) {
+                                        val x = paymentArray.getJSONObject(i)
+                                        supplierPayments.add(WholesalerPayment(id=x.getLong("id"), wholesalerId=x.getLong("wholesalerId"), paymentDate=x.getLong("paymentDate"), amount=x.optDouble("amount",0.0), note=x.optString("note","")))
+                                    }
+                                    dao.replaceAllData(products, invoices, items, expenses, wholesalers, supplierPurchases, supplierPayments)
                                 }
                                 toast("Backup restored successfully")
                                 showHome()
