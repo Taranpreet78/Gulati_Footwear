@@ -1294,13 +1294,16 @@ class MainActivity : AppCompatActivity() {
                     val json = JSONObject(String(entries["backup.json"] ?: error("backup.json is missing"), Charsets.UTF_8))
                     require(json.optString("app") == SHOP_NAME) { "Not a Gulati Footwear backup" }
                     val counts = intArrayOf(json.getJSONArray("products").length(), json.getJSONArray("invoices").length(),
-                        json.optJSONArray("invoiceItems")?.length() ?: 0, json.optJSONArray("expenses")?.length() ?: 0)
+                        json.optJSONArray("invoiceItems")?.length() ?: 0, json.optJSONArray("expenses")?.length() ?: 0,
+                        json.optJSONArray("wholesalers")?.length() ?: 0, json.optJSONArray("wholesalerPurchases")?.length() ?: 0,
+                        json.optJSONArray("wholesalerPayments")?.length() ?: 0)
                     Triple(json, entries, counts)
                 }
                 val json = parsed.first
                 val counts = parsed.third
                 AlertDialog.Builder(this@MainActivity).setTitle("Replace current data?")
                     .setMessage("Products: " + counts[0] + "\nBills: " + counts[1] + "\nBill items: " + counts[2] + "\nExpenses: " + counts[3] +
+                        "\nWholesalers: " + counts[4] + "\nSupplier purchase bills: " + counts[5] + "\nSupplier payments: " + counts[6] +
                         "\n\nRestoring replaces the current data. Please make a backup of current data first.")
                     .setNegativeButton("Cancel", null)
                     .setPositiveButton("Restore") { _, _ ->
