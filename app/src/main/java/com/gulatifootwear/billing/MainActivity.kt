@@ -1249,6 +1249,23 @@ class MainActivity : AppCompatActivity() {
             val rows = (purchases.map { Triple(it.purchaseDate, "Purchase • " + (it.billNumber.ifBlank { "Bill" }), it.billAmount) } +
                 payments.map { Triple(it.paymentDate, "Payment", -it.amount) }).sortedByDescending { it.first }
             if (rows.isEmpty()) body.addView(label("No entries recorded for this wholesaler."))
+            purchases.filter { it.photoPathsJson != "[]" && it.photoPathsJson.isNotBlank() }.forEach { purchase ->
+                val paths = try { JSONArray(purchase.photoPathsJson) } catch (_: Exception) { JSONArray() }
+                if (paths.length() > 0) {
+                    val photoCard = card()
+                    photoCard.addView(label("Bill photos • " + (purchase.billNumber.ifBlank { "Purchase bill" }), 13f))
+                    val photoRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                    for (p in 0 until paths.length()) {
+                        val path = paths.optString(p)
+                        if (path.isNotBlank() && File(path).isFile) photoRow.addView(ImageView(this@MainActivity).apply {
+                            setImageURI(Uri.fromFile(File(path))); scaleType = ImageView.ScaleType.CENTER_CROP
+                            layoutParams = LinearLayout.LayoutParams(100, 100).apply { rightMargin = 8 }
+                            setOnClickListener { showProductPhoto(path) }
+                        })
+                    }
+                    photoCard.addView(photoRow)
+                }
+            }
             rows.forEach { row ->
                 val c = card()
                 c.addView(label(SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(row.first)), 12f))
