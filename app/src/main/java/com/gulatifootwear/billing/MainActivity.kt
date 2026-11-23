@@ -119,6 +119,65 @@ class MainActivity : AppCompatActivity() {
     private val restoreZipPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) confirmAndRestoreBackup(uri)
     }
+    private var supplierPhotoSelection: MutableList<Uri>? = null
+    private var supplierPhotoPreview: LinearLayout? = null
+    private val supplierBillPhotoPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { selected ->
+        val target = supplierPhotoSelection ?: return@registerForActivityResult
+        selected.take((3 - target.size).coerceAtLeast(0)).forEach { target.add(it) }
+        renderSupplierPhotoSelection()
+    }
+
+    private fun renderSupplierPhotoSelection() {
+        val row = supplierPhotoPreview ?: return
+        row.removeAllViews()
+        val selected = supplierPhotoSelection ?: mutableListOf()
+        selected.forEachIndexed { index, uri ->
+            val image = ImageView(this).apply {
+                setImageURI(uri); scaleType = ImageView.ScaleType.CENTER_CROP
+                layoutParams = LinearLayout.LayoutParams(105, 105).apply { rightMargin = 8 }
+                setOnClickListener { showPhotoUri(uri) }
+            }
+            row.addView(image)
+            row.addView(TextView(this).apply {
+                text = "Remove"; setTextColor(Color.RED); setPadding(0, 0, 10, 0)
+                setOnClickListener { selected.removeAt(index); renderSupplierPhotoSelection() }
+            })
+        }
+    }
+
+    private fun showPhotoUri(uri: Uri) {
+        val image = ImageView(this).apply {
+            setImageURI(uri); scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(Color.BLACK)
+            setOnClickListener { scaleType = if (scaleType == ImageView.ScaleType.FIT_CENTER) ImageView.ScaleType.CENTER_CROP else ImageView.ScaleType.FIT_CENTER }
+        }
+        val dlg = AlertDialog.Builder(this).setTitle("Bill photo • Tap to zoom").setView(image).setPositiveButton("Close", null).create()
+        dlg.show()
+        dlg.window?.setLayout((resources.displayMetrics.widthPixels * .94).toInt(), (resources.displayMetrics.heightPixels * .78).toInt())
+    }
+
+    private fun saveSupplierBillPhotos(purchaseId: Long, uris: List<Uri>): List<String> {
+        if (uris.isEmpty()) return emptyList()
+        val folder = File(filesDir, "supplier_bill_photos").apply { mkdirs() }
+        return uris.take(3).mapIndexedNotNull { index, uri ->
+            try {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                var sample = 1
+                while (bounds.outWidth / sample > 1800 || bounds.outHeight / sample > 1800) sample *= 2
+                val bitmap = contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+                } ?: return@mapIndexedNotNull null
+                val scale = minOf(1f, 1500f / maxOf(bitmap.width, bitmap.height))
+                val resized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
+                val file = File(folder, "purchase_${purchaseId}_${index + 1}.jpg")
+                FileOutputStream(file).use { resized.compress(Bitmap.CompressFormat.JPEG, 82, it) }
+                if (resized !== bitmap) bitmap.recycle()
+                bitmap.recycle()
+                if (file.exists() && file.length() > 0) file.absolutePath else null
+            } catch (_: Exception) { null }
+        }
+    }
 
     private fun chooseProductPhoto(onSelected: (String?) -> Unit) {
         productImageResult = onSelected
@@ -1142,6 +1201,19 @@ class MainActivity : AppCompatActivity() {
         panel.addView(dateButton); panel.addView(dateLabel); panel.addView(amount)
         if (purchase) panel.addView(billNo)
         panel.addView(note)
+        val selectedPhotos = mutableListOf<Uri>()
+        if (purchase) {
+            panel.addView(label("Bill photos (up to 3)", 14f))
+            val addPhotos = Button(this).apply { text = "＋ Upload bill photos" }
+            val preview = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            supplierPhotoSelection = selectedPhotos
+            supplierPhotoPreview = preview
+            addPhotos.setOnClickListener {
+                if (selectedPhotos.size >= 3) { toast("Maximum 3 photos per bill"); return@setOnClickListener }
+                supplierBillPhotoPicker.launch(arrayOf("image/*"))
+            }
+            panel.addView(addPhotos); panel.addView(preview)
+        }
         val dialog = AlertDialog.Builder(this).setTitle(if (purchase) "Purchase from ${supplier.name}" else "Payment to ${supplier.name}")
             .setView(panel).setNegativeButton("Cancel", null).setPositiveButton("Save", null).create()
         dialog.setOnShowListener {
@@ -1150,13 +1222,18 @@ class MainActivity : AppCompatActivity() {
                 if (value == null || value <= 0.0) { amount.error = "Enter a valid amount"; return@setOnClickListener }
                 lifecycleScope.launch {
                     withContext(Dispatchers.IO) {
-                        if (purchase) dao.addWholesalerPurchase(WholesalerPurchase(wholesalerId=supplier.id, purchaseDate=selected.timeInMillis, billAmount=value, billNumber=billNo.text.toString().trim(), note=note.text.toString().trim()))
-                        else dao.addWholesalerPayment(WholesalerPayment(wholesalerId=supplier.id, paymentDate=selected.timeInMillis, amount=value, note=note.text.toString().trim()))
+                        if (purchase) {
+                            val purchaseId = dao.addWholesalerPurchase(WholesalerPurchase(wholesalerId=supplier.id, purchaseDate=selected.timeInMillis, billAmount=value, billNumber=billNo.text.toString().trim(), note=note.text.toString().trim()))
+                            val saved = saveSupplierBillPhotos(purchaseId, selectedPhotos)
+                            if (saved.isNotEmpty()) dao.updateWholesalerPurchase(WholesalerPurchase(id=purchaseId, wholesalerId=supplier.id, purchaseDate=selected.timeInMillis, billAmount=value, billNumber=billNo.text.toString().trim(), note=note.text.toString().trim(), photoPathsJson=JSONArray(saved).toString()))
+                        } else dao.addWholesalerPayment(WholesalerPayment(wholesalerId=supplier.id, paymentDate=selected.timeInMillis, amount=value, note=note.text.toString().trim()))
                     }
+                    supplierPhotoSelection = null; supplierPhotoPreview = null
                     dialog.dismiss(); toast(if (purchase) "Purchase bill saved" else "Payment recorded"); wholesalerScreen()
                 }
             }
         }
+        dialog.setOnDismissListener { supplierPhotoSelection = null; supplierPhotoPreview = null }
         dialog.show()
     }
 
